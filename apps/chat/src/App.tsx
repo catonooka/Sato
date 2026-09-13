@@ -677,11 +677,14 @@ export default function App(): JSX.Element {
         if (cancelled || listOwnerRef.current !== resolved) return
         setSessions(page.sessions)
         setTotal(page.total)
+        // Config rides the healed header: fetched in parallel with a stale
+        // user id it would 403 and the panel would stay generic forever.
+        const loaded = await fetchConfig()
+        if (!cancelled) setConfig(loaded)
       } catch (err: unknown) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err))
       }
     })()
-    fetchConfig().then(setConfig).catch(() => { /* the header simply stays generic */ })
     return () => { cancelled = true }
   }, [])
 

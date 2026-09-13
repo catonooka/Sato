@@ -134,6 +134,22 @@ async function renderApp(options: {
     const url = String(input)
     const method = init?.method ?? 'GET'
     if (url === '/api/users') {
+      if (method === 'GET') {
+        // Mirror the server: any header naming an unknown user is refused
+        // before routing — the roster must therefore ride without it.
+        const header = init?.headers !== undefined ? new Headers(init.headers).get('x-dsh-user') : null
+        if (header !== null && !users.some(user => user.id === header)) {
+          const errorBody = { error: 'unknown user — reload the page' }
+          const refusal = {
+            ok: false,
+            status: 403,
+            statusText: 'Forbidden',
+            json: async () => errorBody,
+            text: async () => JSON.stringify(errorBody),
+          }
+          return Promise.resolve({ ...refusal, clone: () => refusal } as unknown as Response)
+        }
+      }
       if (method === 'POST') {
         userCreates.push(JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>)
         return Promise.resolve(jsonResponse({ users, defaultUserId: users[0]?.id ?? '', createdId: 'u_new' }))
@@ -1132,6 +1148,18 @@ describe('user profiles', () => {
     const dialog = await screen.findByRole('dialog', { name: 'Choose your avatar' })
     fireEvent.click(within(dialog).getByRole('button', { name: 'Avatar 7' }))
     await waitFor(() => { expect(userPatches).toEqual([{ id: 'u_main', body: { avatar: 7 } }]) })
+  })
+
+  it('heals a stored user id the server no longer knows instead of deadlocking', async () => {
+    // A server-side data reset leaves browsers holding a user id nothing
+    // knows; the roster must ride without the header or every call 403s and
+    // "reload the page" can never fix it.
+    localStorage.setItem('dsh-chat-user', 'u_ghost')
+    const { listHeaders } = await renderApp({})
+    await waitFor(() => { expect(screen.queryByRole('alert')).toBeNull() })
+    expect(screen.getByRole('button', { name: 'catonooka' })).toBeTruthy()
+    expect(localStorage.getItem('dsh-chat-user')).toBe('u_main')
+    expect(listHeaders[listHeaders.length - 1]).toBe('u_main')
   })
 })
 

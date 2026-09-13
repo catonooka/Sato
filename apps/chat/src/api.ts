@@ -137,9 +137,15 @@ export interface UsersBody {
   updatedId?: string
 }
 
-/** The user roster; switching is client state (the x-dsh-user header). */
+/**
+ * The user roster; switching is client state (the x-dsh-user header). The
+ * roster is the discovery call — it is how a stored user id the server no
+ * longer knows heals to the default profile — so it rides without the
+ * header: with a stale id stamped on, the server would refuse the very
+ * request meant to resolve it and the tab could never recover.
+ */
 export function listUsers(): Promise<UsersBody> {
-  return fetchJson<UsersBody>('/api/users')
+  return fetchJson<UsersBody>('/api/users', undefined, { bare: true })
 }
 
 /** Add one user profile. The caller switches to it by setting the header. */
@@ -168,13 +174,14 @@ export function updateUser(
  * server restart rotated expectations) refetches the page to receive a fresh
  * HttpOnly cookie, then replays the request once.
  */
-async function fetchWithSessionHeal(url: string, init?: RequestInit): Promise<Response> {
-  const first = await fetch(url, withUserHeader(init))
+async function fetchWithSessionHeal(url: string, init?: RequestInit, options?: { bare?: boolean }): Promise<Response> {
+  const go = (): Promise<Response> => fetch(url, options?.bare === true ? init : withUserHeader(init))
+  const first = await go()
   if (first.status !== 403) return first
   const reason = await first.clone().text().catch(() => '')
   if (!reason.includes('session cookie required')) return first
   await fetch('/', { cache: 'no-store' }).catch(() => undefined)
-  return await fetch(url, withUserHeader(init))
+  return await go()
 }
 
 /** localStorage key holding the acting user profile's id across reloads. */
@@ -213,8 +220,8 @@ function withUserHeader(init: RequestInit | undefined): RequestInit | undefined 
   return { ...init, headers }
 }
 
-async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetchWithSessionHeal(url, init)
+async function fetchJson<T>(url: string, init?: RequestInit, options?: { bare?: boolean }): Promise<T> {
+  const response = await fetchWithSessionHeal(url, init, options)
   if (!response.ok) {
     let message = `${String(response.status)} ${response.statusText}`
     try {
