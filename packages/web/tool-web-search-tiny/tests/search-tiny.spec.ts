@@ -13,6 +13,11 @@ import {
   WEB_SEARCH_DESCRIPTION,
   RecentSearches,
   REPEAT_STOP_THRESHOLD,
+  SEARCH_BUDGET_MAX,
+  SEARCH_BUDGET_NOTICE,
+  SEARCH_BUDGET_NOTICE_KIND,
+  SEARCH_BUDGET_WINDOW_MS,
+  SearchBudget,
   formatSearchOutput,
   generatorSystem,
   queryTokens,
@@ -302,7 +307,7 @@ describe('search latency budget', () => {
 
 describe('anti-loop guidance', () => {
   it('teaches the no-retry rule in the tool description itself', () => {
-    expect(WEB_SEARCH_DESCRIPTION).toContain('do not reword it and search again')
+    expect(WEB_SEARCH_DESCRIPTION).toContain('only a few searches per conversation window')
   })
 
   it('teaches source-first answering in the tool description', () => {
@@ -354,6 +359,55 @@ describe('queryTokens / similarQuery', () => {
 
   it('never matches an empty query', () => {
     expect(similarQuery(queryTokens('   '), queryTokens('anything'))).toBe(false)
+  })
+})
+
+describe('SearchBudget', () => {
+  it('allows the documented number of fresh searches per window, then refuses', () => {
+    const budget = new SearchBudget()
+    for (let index = 0; index < SEARCH_BUDGET_MAX; index++) {
+      expect(budget.spend('sess-1', index)).toBe(true)
+    }
+    expect(budget.spend('sess-1', SEARCH_BUDGET_MAX)).toBe(false)
+    expect(SEARCH_BUDGET_MAX).toBe(6)
+  })
+
+  it('isolates sessions and resets once the window rolls over', () => {
+    const budget = new SearchBudget()
+    for (let index = 0; index < SEARCH_BUDGET_MAX; index++) {
+      expect(budget.spend('sess-1', index)).toBe(true)
+    }
+    // Another session has its own budget.
+    expect(budget.spend('sess-2', 1)).toBe(true)
+    // Outside the window every earlier mark has expired.
+    expect(budget.spend('sess-1', SEARCH_BUDGET_WINDOW_MS + 1)).toBe(true)
+    expect(SEARCH_BUDGET_WINDOW_MS).toBe(90_000)
+  })
+
+  it('drops only the expired marks, keeping later ones counted', () => {
+    const budget = new SearchBudget(2, 1_000)
+    expect(budget.spend('sess-1', 500)).toBe(true)
+    expect(budget.spend('sess-1', 900)).toBe(true)
+    // Both marks are still live: the budget is full.
+    expect(budget.spend('sess-1', 1_200)).toBe(false)
+    // The 500 mark has expired; one slot is free again.
+    expect(budget.spend('sess-1', 1_600)).toBe(true)
+  })
+})
+
+describe('formatSearchOutput — search budget notice', () => {
+  it('answers a budgeted-out search with the answer-now instruction, not "no results"', () => {
+    const text = formatSearchOutput(value({ sources: [], notice: SEARCH_BUDGET_NOTICE_KIND }))
+    expect(text).toContain(SEARCH_BUDGET_NOTICE)
+    expect(text).toContain('write your final answer now')
+    expect(text).not.toContain('No results found.')
+  })
+
+  it('keeps the plain no-results guidance for searches without the notice marker', () => {
+    const text = formatSearchOutput(value({ sources: [] }))
+    expect(text).toContain('No results found.')
+    expect(text).toContain(STOP_SEARCHING_NOTICE)
+    expect(text).not.toContain(SEARCH_BUDGET_NOTICE)
   })
 })
 
