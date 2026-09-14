@@ -14,7 +14,7 @@ import { applyWebFetchTool } from './fetch.ts'
 
 export { WEB_SEARCH_MAX_QUERIES, WEB_SEARCH_MAX_RESULTS, applyWebSearchTool, formatSearchOutput, presentSearchCall, presentSearchResult, searchMetaFromValue, searchMetaFromResult } from './search.ts'
 export type { WebSearchMeta } from './search.ts'
-export { applyWebFetchTool, formatFetchOutput, parseFetchArgs, presentFetchCall, presentFetchResult, fetchMetaFromValue, fetchMetaFromResult } from './fetch.ts'
+export { applyWebFetchTool, FETCH_BUDGET_MAX, FETCH_BUDGET_NOTICE, FETCH_BUDGET_WINDOW_MS, FetchBudget, formatFetchOutput, parseFetchArgs, presentFetchCall, presentFetchResult, fetchMetaFromValue, fetchMetaFromResult } from './fetch.ts'
 export type { WebFetchMeta } from './fetch.ts'
 
 /** Cordis plugin name used by loader diagnostics. */

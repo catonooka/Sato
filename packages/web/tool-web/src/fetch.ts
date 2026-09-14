@@ -264,6 +264,52 @@ function renderBody(body: WebFetchBody, maxInputChars: number): RenderedBody {
 /** The truncation notice appended when the provider or the output cap cut content. */
 const TRUNCATION_FOOTER = '\n\n(Content truncated. Fetch a more specific URL or section for the full text.)'
 
+/** Rolling window the per-session fetch budget counts page reads over. */
+export const FETCH_BUDGET_WINDOW_MS = 90_000
+
+/** How many page fetches one session may run per window. Eight covers a
+ * focused read-through of the promising search hits; a model that walks a
+ * site section by section (each section is a fresh URL, so no dedup catches
+ * it) burns the turn's steps gathering instead of answering. */
+export const FETCH_BUDGET_MAX = 8
+
+/** What a budgeted-out fetch fails with: the gathering must become an answer. */
+export const FETCH_BUDGET_NOTICE = `web_fetch budget used: this conversation already ran ${String(FETCH_BUDGET_MAX)} page fetches in the last 90 seconds. Do not fetch again — write your final answer now from the pages already gathered; where they are silent, say you could not verify it online.`
+
+/**
+ * Rolling per-session counter of page fetches, mirroring the search tool's
+ * budget: past {@link FETCH_BUDGET_MAX} fetches inside the window the next
+ * one is refused so the turn turns back into an answer.
+ */
+export class FetchBudget {
+  private readonly marks = new Map<string, number[]>()
+
+  constructor(
+    private readonly max: number = FETCH_BUDGET_MAX,
+    private readonly windowMs: number = FETCH_BUDGET_WINDOW_MS,
+  ) {}
+
+  /**
+   * Try to spend one fetch slot for a session.
+   * @param key - the per-session budget key.
+   * @param now - the reference time (injectable for deterministic tests).
+   * @returns whether the fetch may proceed.
+   */
+  spend(key: string, now = Date.now()): boolean {
+    const live = (this.marks.get(key) ?? []).filter(at => now - at < this.windowMs)
+    if (live.length >= this.max) {
+      this.marks.set(key, live)
+      return false
+    }
+    live.push(now)
+    this.marks.set(key, live)
+    return true
+  }
+}
+
+/** Per-session rolling fetch budget behind the execute guard. */
+const fetchBudget = new FetchBudget()
+
 /** A rendered fetch output: the model-facing text and its effective truncation. */
 interface RenderedFetch {
   /** The complete bounded output — header, rendered body, and truncation footer. */
@@ -495,6 +541,11 @@ export function applyWebFetchTool(ctx: Context, timeoutMs: number, maxOutputChar
     // Provider reads do not mutate parent-agent state.
     isConcurrencySafe: () => true,
     async execute(args, exec) {
+      // A model that walks a site page by page spends the turn's whole step
+      // budget gathering; past the rolling window budget the next fetch is
+      // refused and the notice turns the gathering into an answer.
+      const budgetKey = exec.agent?.session.id !== undefined ? String(exec.agent.session.id) : 'shared'
+      if (!fetchBudget.spend(budgetKey)) throw new Error(FETCH_BUDGET_NOTICE)
       const input = parseFetchArgs(args)
       const result = await ctx.web.fetch(
         { url: input.url },

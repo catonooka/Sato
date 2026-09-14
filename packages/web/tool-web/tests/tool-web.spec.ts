@@ -19,6 +19,9 @@ import {
   searchMetaFromResult,
   fetchMetaFromValue,
   fetchMetaFromResult,
+  FETCH_BUDGET_MAX,
+  FETCH_BUDGET_NOTICE,
+  FetchBudget,
   WEB_SEARCH_MAX_QUERIES,
   WEB_SEARCH_MAX_RESULTS,
 } from '@deepseek-ai/dsh-tool-web'
@@ -194,6 +197,31 @@ describe('web_search presentation meta and result view', () => {
 
   it('accepts an empty source list as valid meta', () => {
     expect(searchMetaFromResult({ sources: [], truncated: false })).toEqual({ sources: [], truncated: false })
+  })
+})
+
+describe('FetchBudget', () => {
+  it('allows the documented number of fetches per window, then refuses', () => {
+    const budget = new FetchBudget()
+    for (let index = 0; index < FETCH_BUDGET_MAX; index++) {
+      expect(budget.spend('sess-1', index)).toBe(true)
+    }
+    expect(budget.spend('sess-1', FETCH_BUDGET_MAX)).toBe(false)
+    expect(FETCH_BUDGET_MAX).toBe(8)
+  })
+
+  it('isolates sessions and frees slots as the window rolls', () => {
+    const budget = new FetchBudget(2, 1_000)
+    expect(budget.spend('sess-1', 0)).toBe(true)
+    expect(budget.spend('sess-1', 400)).toBe(true)
+    expect(budget.spend('sess-2', 400)).toBe(true)
+    expect(budget.spend('sess-1', 500)).toBe(false)
+    expect(budget.spend('sess-1', 1_401)).toBe(true)
+  })
+
+  it('carries the answer-now instruction in the refusal notice', () => {
+    expect(FETCH_BUDGET_NOTICE).toContain('write your final answer now')
+    expect(FETCH_BUDGET_NOTICE).toContain(String(FETCH_BUDGET_MAX))
   })
 })
 
