@@ -49,7 +49,7 @@ import {
   writeFileAtomic,
   type SessionUserMeta,
 } from './users-store.ts'
-import { routeSearchTarget, toSources, UserChromeSearchProvider } from '@deepseek-ai/dsh-web-search-chrome/src/provider.ts'
+import { routeSearchTarget, toSources } from '@deepseek-ai/dsh-web-search-chrome/src/provider.ts'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -113,9 +113,7 @@ export interface Config {
   temperature?: number
   /** Persona seeding the runtime system-prompt setting. */
   persona: string
-  /** Chrome DevTools port the user-chrome engine talks to. */
-  chromeCdpPort: number
-  /** General engine the user-chrome engine searches inside Chrome. */
+  /** General engine the user-chrome extension searches inside Chrome. */
   chromeWebEngine: 'google' | 'bing' | 'duckduckgo'
 }
 
@@ -129,7 +127,6 @@ export const Config: z<Config> = z.object({
   reasoningEffort: z.union([z.const('off'), z.const('low'), z.const('high'), z.const('max')]),
   temperature: z.number().min(0).max(2),
   persona: z.string().default(DEFAULT_PERSONA),
-  chromeCdpPort: z.number().default(9222),
   chromeWebEngine: z.union([z.const('google'), z.const('bing'), z.const('duckduckgo')]).default('google'),
 })
 
@@ -1430,6 +1427,44 @@ export function bridgeClientOf(url: URL): string {
   return trimmed === '' ? DEFAULT_BRIDGE_CLIENT : trimmed
 }
 
+/** Result of one user-chrome search: projected sources plus the truncation flag. */
+export interface UserChromeSearchResult {
+  sources: ReturnType<typeof toSources>
+  truncated: boolean
+}
+
+/** A search against "Your Chrome" with no extension heartbeat behind it. */
+export const CHROME_NOT_CONNECTED = 'user-chrome: the Chrome extension is not connected — load the companion extension (Settings → Tools → How to connect) or switch the search tool to Built-in'
+
+/**
+ * Build the user-chrome search entry point over one extension bridge. The
+ * extension is the only transport: its service worker fetches with the
+ * profile's cookies, so a search never opens a tab, never launches Chrome,
+ * and never reaches past the profile the extension lives in. A stale
+ * heartbeat fails fast instead of degrading into anything that would.
+ * @param bridge - the bridge the companion extension long-polls.
+ * @param webEngine - the general engine the extension should search inside.
+ * @returns the async search function the selector and test route share.
+ */
+export function createUserChromeSearch(
+  bridge: ExtensionBridge,
+  webEngine: 'google' | 'bing' | 'duckduckgo',
+): (request: { query: string; maxResults?: number }) => Promise<UserChromeSearchResult> {
+  return async (request) => {
+    if (!bridge.seenWithin(EXTENSION_TTL_MS)) throw new Error(CHROME_NOT_CONNECTED)
+    const route = routeSearchTarget(request.query, webEngine)
+    const settlement = await bridge.enqueue({
+      kind: route.kind,
+      query: route.query,
+      url: route.url,
+      engine: route.kind === 'x' ? 'x' : webEngine,
+      maxResults: request.maxResults ?? 5,
+    }, EXTENSION_JOB_TIMEOUT_MS)
+    if (!settlement.ok) throw new Error(`user-chrome: the extension search failed: ${settlement.error}`)
+    return { sources: toSources(settlement.sources, request.maxResults ?? 5), truncated: false }
+  }
+}
+
 /**
  * The API's locality gate: loopback-local requests pass everywhere; a
  * `chrome-extension://` origin passes only on the two bridge routes, so a
@@ -2010,14 +2045,9 @@ export function apply(ctx: Context, config: Config): void {
   // The web seam pins one provider id at boot, so the pinned id is a
   // chat-owned selector: every search dispatches to the engine the settings
   // panel last chose — the keyless built-in, or the user's own Chrome. The
-  // Chrome side prefers the companion extension (invisible, no debug port)
-  // and falls back to the CDP engine when the extension is not connected.
+  // Chrome side rides only the companion extension: cookie-bearing fetches
+  // from its service worker, so no search ever opens a tab or launches Chrome.
   const tinyEngine = new TinyMetasearchProvider({ timeoutMs: 10_000, wikipedia: true })
-  const chromeEngine = new UserChromeSearchProvider({
-    cdpPort: config.chromeCdpPort,
-    timeoutMs: 12_000,
-    webEngine: config.chromeWebEngine,
-  })
   // Idle agents accumulate for the process's life otherwise; a slow sweep
   // retires quiet ones (never one with an open stream) and conversations
   // resume transparently on demand.
@@ -2089,38 +2119,14 @@ export function apply(ctx: Context, config: Config): void {
       return outcome
     })
   }
-  type ChromeSearchOutcome = {
-    engine: 'extension' | 'cdp'
-    result: Awaited<ReturnType<UserChromeSearchProvider['search']>>
-  }
-  async function userChromeSearch(
-    request: Parameters<UserChromeSearchProvider['search']>[0],
-    signal?: AbortSignal,
-  ): Promise<ChromeSearchOutcome> {
-    if (extensionBridge.seenWithin(EXTENSION_TTL_MS)) {
-      const route = routeSearchTarget(request.query, config.chromeWebEngine)
-      const settlement = await extensionBridge.enqueue({
-        kind: route.kind,
-        query: route.query,
-        url: route.url,
-        engine: route.kind === 'x' ? 'x' : config.chromeWebEngine,
-        maxResults: request.maxResults ?? 5,
-      }, EXTENSION_JOB_TIMEOUT_MS)
-      if (!settlement.ok) throw new Error(`user-chrome: the extension search failed: ${settlement.error}`)
-      return {
-        engine: 'extension',
-        result: { sources: toSources(settlement.sources, request.maxResults ?? 5), truncated: false },
-      }
-    }
-    return { engine: 'cdp', result: await chromeEngine.search(request, signal) }
-  }
+  const userChromeSearch = createUserChromeSearch(extensionBridge, config.chromeWebEngine)
   ctx.inject(['web'], (webCtx) => {
     webCtx.web.registerSearchProvider({
       id: 'chat-selector',
       available: () => true,
       search: (request, signal) =>
         settings.searchTool === 'user-chrome'
-          ? userChromeSearch(request, signal).then(outcome => outcome.result)
+          ? userChromeSearch(request)
           : tinyEngine.search(request, signal),
     })
   })
@@ -3273,7 +3279,6 @@ export function apply(ctx: Context, config: Config): void {
       sendJson(res, 200, {
         extension: extensionBridge.seenWithin(EXTENSION_TTL_MS),
         clients: extensionBridge.clientList(EXTENSION_TTL_MS),
-        cdp: await chromeEngine.probe(),
         ...extensionPath !== undefined ? { extensionPath } : {},
       }, chromeCors(req))
       return
@@ -3290,19 +3295,17 @@ export function apply(ctx: Context, config: Config): void {
       const query = typeof body.query === 'string' && body.query.trim() !== '' ? body.query.trim() : 'hello world'
       const startedAt = Date.now()
       try {
-        const outcome = await userChromeSearch({ query, maxResults: 5 })
+        const result = await userChromeSearch({ query, maxResults: 5 })
         sendJson(res, 200, {
           ok: true,
-          engine: outcome.engine,
-          count: outcome.result.sources.length,
-          sample: outcome.result.sources.slice(0, 3).map(source => source.title),
+          count: result.sources.length,
+          sample: result.sources.slice(0, 3).map(source => source.title),
           ms: Date.now() - startedAt,
         }, chromeCors(req))
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error)
         sendJson(res, 200, {
           ok: false,
-          engine: extensionBridge.seenWithin(EXTENSION_TTL_MS) ? 'extension' : 'cdp',
           error: message,
         }, chromeCors(req))
       }

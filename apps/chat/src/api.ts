@@ -339,24 +339,22 @@ export function updateConfig(patch: SettingsPatch): Promise<AppConfig> {
   })
 }
 
-/** Whether each chrome engine answers right now. */
+/** Whether the companion extension answers right now. */
 export interface ChromeStatus {
   extension: boolean
   /** Connected Chrome profile labels, freshest first, with action opt-ins. */
   clients?: { client: string; lastSeenAt: number; actuation?: boolean }[]
-  cdp: boolean
   extensionPath?: string
 }
 
-/** Connection state of the chrome engines (extension heartbeat, debug port). */
+/** Connection state of the companion extension (heartbeat + profiles). */
 export function fetchChromeStatus(): Promise<ChromeStatus> {
   return fetchJson<ChromeStatus>('/api/chrome/status')
 }
 
-/** One real search run through whichever chrome engine is connected. */
+/** One real search run through the companion extension. */
 export interface ChromeTestOutcome {
   ok: boolean
-  engine?: 'extension' | 'cdp'
   count?: number
   sample?: string[]
   ms?: number

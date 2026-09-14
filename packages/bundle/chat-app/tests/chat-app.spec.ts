@@ -6,7 +6,8 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, afterEach } from 'vitest'
+import { ExtensionBridge } from '@deepseek-ai/dsh-web-search-chrome/src/bridge.ts'
 import {
   activeProfile,
   applySettingsPatch,
@@ -42,6 +43,8 @@ import {
   projectSurfaceEvent,
   requestChunks,
   bridgeClientOf,
+  CHROME_NOT_CONNECTED,
+  createUserChromeSearch,
   settingsJson,
   isExtensionBridgePath,
   sessionVisibleToUser,
@@ -230,6 +233,63 @@ describe('isExtensionBridgePath', () => {
   })
 })
 
+describe('createUserChromeSearch', () => {
+  // Jobs settle on real timers; every test disposes to clear them.
+  const bridges: InstanceType<typeof ExtensionBridge>[] = []
+
+  afterEach(() => {
+    for (const created of bridges.splice(0)) created.dispose()
+  })
+
+  it('fails fast when no extension heartbeat exists — the only transport is gone', async () => {
+    const search = createUserChromeSearch(new ExtensionBridge(), 'google')
+    await expect(search({ query: 'node 25' })).rejects.toThrow(CHROME_NOT_CONNECTED)
+  })
+
+  it('settles a heartbeat-backed search through the bridge and projects its sources', async () => {
+    const created = new ExtensionBridge()
+    bridges.push(created)
+    created.markSeen()
+    const search = createUserChromeSearch(created, 'google')
+    const pending = search({ query: 'node 25', maxResults: 5 })
+    // The extension long-poll picks the job up, then posts its result.
+    const job = await created.nextJob(10)
+    expect(job).toMatchObject({ kind: 'web', query: 'node 25', engine: 'google' })
+    created.settle({
+      id: job?.id,
+      ok: true,
+      sources: [{ url: 'https://nodejs.org/en/blog', title: 'Node.js 25' }],
+    })
+    await expect(pending).resolves.toEqual({
+      sources: [{ url: 'https://nodejs.org/en/blog', title: 'Node.js 25' }],
+      truncated: false,
+    })
+  })
+
+  it('routes an x:-prefixed query to the x engine inside the extension', async () => {
+    const created = new ExtensionBridge()
+    bridges.push(created)
+    created.markSeen()
+    const search = createUserChromeSearch(created, 'google')
+    const pending = search({ query: 'x: dsh chat release' })
+    const job = await created.nextJob(10)
+    expect(job).toMatchObject({ kind: 'x', engine: 'x' })
+    created.settle({ id: job?.id, ok: true, sources: [] })
+    await expect(pending).resolves.toEqual({ sources: [], truncated: false })
+  })
+
+  it('surfaces an extension failure as the search error', async () => {
+    const created = new ExtensionBridge()
+    bridges.push(created)
+    created.markSeen()
+    const search = createUserChromeSearch(created, 'google')
+    const pending = search({ query: 'node 25' })
+    const job = await created.nextJob(10)
+    created.settle({ id: job?.id, ok: false, error: 'not logged in' })
+    await expect(pending).rejects.toThrow('user-chrome: the extension search failed: not logged in')
+  })
+})
+
 describe('applySettingsPatch — auto-compact toggle', () => {
   it('sets, flips, and clears the toggle', () => {
     const off = applySettingsPatch(baseSettings, { autoCompact: false })
@@ -317,7 +377,6 @@ const baseConfig: Config = {
   provider: 'deepseek-official',
   model: 'deepseek-chat',
   persona: 'You are a helpful assistant.',
-  chromeCdpPort: 9222,
   chromeWebEngine: 'google',
 }
 

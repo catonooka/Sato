@@ -241,7 +241,7 @@ async function renderApp(options: {
       return Promise.resolve(jsonResponse(configState))
     }
     if (url === '/api/chrome/status') {
-      return Promise.resolve(jsonResponse({ extension: true, clients: [{ client: 'work' }], cdp: false }))
+      return Promise.resolve(jsonResponse({ extension: true, clients: [{ client: 'work' }] }))
     }
     if (url === '/api/capabilities') {
       return Promise.resolve(jsonResponse({

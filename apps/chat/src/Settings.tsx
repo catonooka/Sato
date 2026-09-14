@@ -294,8 +294,8 @@ export function SettingsPanel({
     try {
       const outcome = await testChromeSearch('latest ai news')
       setChromeTest(outcome.ok
-        ? `${outcome.engine ?? 'chrome'} · ${String(outcome.count ?? 0)} results · ${((outcome.ms ?? 0) / 1000).toFixed(1)}s`
-        : `${outcome.engine ?? 'chrome'}: ${outcome.error ?? 'failed'}`)
+        ? `extension · ${String(outcome.count ?? 0)} results · ${((outcome.ms ?? 0) / 1000).toFixed(1)}s`
+        : outcome.error ?? 'failed')
       fetchChromeStatus().then(setChromeStatus).catch(() => undefined)
     } catch (err: unknown) {
       setChromeTest(err instanceof Error ? err.message : String(err))
@@ -760,14 +760,12 @@ export function SettingsPanel({
                   Chrome connection
                   <span className="settings-value chrome-connection">
                     <span
-                      className={chromeStatus?.extension === true || chromeStatus?.cdp === true ? 'chrome-dot on' : 'chrome-dot'}
+                      className={chromeStatus?.extension === true ? 'chrome-dot on' : 'chrome-dot'}
                       aria-hidden="true"
                     />
                     {chromeStatus?.extension === true
                       ? 'extension connected'
-                      : chromeStatus?.cdp === true
-                        ? 'debug port connected'
-                        : chromeStatus === undefined ? 'checking…' : 'not connected'}
+                      : chromeStatus === undefined ? 'checking…' : 'not connected'}
                     {chromeStatus?.extension === true && chromeStatus.clients !== undefined && chromeStatus.clients.length > 0
                       ? (
                         <span className="chrome-profiles">
@@ -800,15 +798,13 @@ export function SettingsPanel({
                 {showChromeHelp
                   ? (
                     <div className="chrome-help">
-                      <p><strong>Extension</strong> — invisible searches, no debug port:</p>
+                      <p><strong>Extension</strong> — invisible searches in your Chrome, no tabs opened:</p>
                       <ol>
                         <li>Open <code>chrome://extensions</code></li>
                         <li>Turn on <em>Developer mode</em></li>
                         <li><em>Load unpacked</em> → <code>{chromeStatus?.extensionPath ?? '…/dsh-lean-chat/packages/web/web-search-chrome/extension'}</code></li>
                       </ol>
                       <p>Different port? Set it once in the extension's options after loading.</p>
-                      <p><strong>Debug port</strong> — quit Chrome fully, then relaunch:</p>
-                      <pre><code>open -na "Google Chrome" --args --remote-debugging-port=9222</code></pre>
                     </div>
                   )
                   : undefined}
