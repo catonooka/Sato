@@ -323,6 +323,14 @@ describe('cordis.patch.yml tool mount', () => {
     expect(mount).toBeDefined()
     expect(mount?.config).toMatchObject({ maxResults: 5, generateQuestion: false })
   })
+
+  it('caps agent turns at 16 steps so a tool-looping model cannot spin forever', () => {
+    const raw = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
+    const doc = load(raw.replace(/!!js /gu, ''))
+    const mount = findPlugin(doc, 'agent-loop')
+    expect(mount).toBeDefined()
+    expect(mount?.config).toMatchObject({ maxStepsPerTurn: 16 })
+  })
 })
 
 describe('applySettingsPatch — auto-compact toggle', () => {

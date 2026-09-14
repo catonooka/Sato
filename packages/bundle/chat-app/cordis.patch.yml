@@ -116,6 +116,9 @@
       name: '@deepseek-ai/dsh-agent-loop'
       config:
         agents: []
+        # Chat turns answer in a handful of steps; a model stuck calling
+        # tools without answering is stopped here, not left looping.
+        maxStepsPerTurn: 16
 
     - id: sessions
       name: '@deepseek-ai/dsh-session-persistence-jsonl'

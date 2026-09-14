@@ -33,7 +33,7 @@ import type { ProjectionDefinition } from '@deepseek-ai/dsh-session-projection'
 import { SessionPersistenceNotFoundError } from '@deepseek-ai/dsh-session-persistence'
 import type { SessionHandle, SessionPersistence } from '@deepseek-ai/dsh-session-persistence'
 import { ReactLoopAgent } from './agent.ts'
-import { DEFAULT_MAX_PARALLEL_TOOL_CALLS } from './constants.ts'
+import { DEFAULT_MAX_PARALLEL_TOOL_CALLS, DEFAULT_MAX_STEPS_PER_TURN } from './constants.ts'
 
 /** Fiber states that cannot own or serve a new lifecycle. */
 const INACTIVE_STATES: ReadonlySet<FiberState> = new Set([
@@ -195,6 +195,15 @@ function resolveMaxParallelToolCalls(value: number | undefined): number {
   return maxParallelToolCalls
 }
 
+/** Resolve the per-turn step cap at the owning config boundary. */
+function resolveMaxStepsPerTurn(value: number | undefined): number {
+  const maxStepsPerTurn = value ?? DEFAULT_MAX_STEPS_PER_TURN
+  if (!Number.isInteger(maxStepsPerTurn) || maxStepsPerTurn < 1) {
+    throw new Error('maxStepsPerTurn must be a positive integer')
+  }
+  return maxStepsPerTurn
+}
+
 /** Reject an output-token cap that cannot be represented exactly on the request wire. */
 function assertAgentOptions(options: AgentOptions): void {
   if (options.maxTokens !== undefined
@@ -247,7 +256,7 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-export { DEFAULT_MAX_PARALLEL_TOOL_CALLS }
+export { DEFAULT_MAX_PARALLEL_TOOL_CALLS, DEFAULT_MAX_STEPS_PER_TURN }
 
 /**
  * One launcher-selected session identity for a configured agent. `resume`
@@ -307,11 +316,14 @@ export const AGENT_LOOP_SETTINGS_NAMESPACE = 'agent-loop'
 export interface AgentLoopSettings {
   /** Maximum parallel-safe calls in flight per agent step. */
   maxParallelToolCalls: number
+  /** Maximum model steps one turn may take before it is stopped. */
+  maxStepsPerTurn: number
 }
 
 /** Schema of the agent-loop settings section. */
 export const AGENT_LOOP_SETTINGS_SCHEMA: z<AgentLoopSettings> = z.object({
   maxParallelToolCalls: z.number().step(1).min(1).default(DEFAULT_MAX_PARALLEL_TOOL_CALLS),
+  maxStepsPerTurn: z.number().step(1).min(1).default(DEFAULT_MAX_STEPS_PER_TURN),
 })
 
 /** Agent-loop plugin configuration. */
@@ -321,6 +333,13 @@ export interface Config {
    * omission defaults to {@link DEFAULT_MAX_PARALLEL_TOOL_CALLS}.
    */
   maxParallelToolCalls?: number
+  /**
+   * Maximum model steps one turn may take. A model that keeps calling tools
+   * without ever answering is stopped at the next step boundary and the turn
+   * ends with a structured error, so no conversation can loop forever;
+   * omission defaults to {@link DEFAULT_MAX_STEPS_PER_TURN}.
+   */
+  maxStepsPerTurn?: number
   /** Agents created or resumed at plugin startup. */
   agents: (AgentOptions & {
     /** Stable config label used in logs and as the fresh combined-id prefix. */
@@ -335,7 +354,7 @@ export interface Config {
 }
 
 /** Agent-loop configuration after defaults and load-time validation. */
-type ResolvedConfig = Config & { maxParallelToolCalls: number }
+type ResolvedConfig = Config & { maxParallelToolCalls: number; maxStepsPerTurn: number }
 
 /** Reject self-contained identity conflicts before any configured agent starts. */
 function validateConfiguredAgents(agents: Config['agents']): void {
@@ -385,6 +404,7 @@ export class AgentLoop extends Service implements AgentFactory {
 
     const entry: AgentLoopSettings = {
       maxParallelToolCalls: resolveMaxParallelToolCalls(config.maxParallelToolCalls),
+      maxStepsPerTurn: resolveMaxStepsPerTurn(config.maxStepsPerTurn),
     }
     let source: () => AgentLoopSettings = () => entry
     this.config = {
@@ -396,13 +416,21 @@ export class AgentLoop extends Service implements AgentFactory {
       get maxParallelToolCalls() {
         return source().maxParallelToolCalls
       },
+      // Read at every step boundary: a committed change stops the next
+      // overflow turn without touching one already past its last step.
+      get maxStepsPerTurn() {
+        return source().maxStepsPerTurn
+      },
     }
     ctx.inject(['settings'], (settingsCtx) => {
       settingsCtx.settings.installSection(ctx, AGENT_LOOP_SETTINGS_NAMESPACE, AGENT_LOOP_SETTINGS_SCHEMA, entry, {
         // The schema admits any integer above zero; `resolveMaxParallelToolCalls`
         // owns the whole rule, so refusing here keeps the running scheduler on
         // its last good cap instead of failing at the next tool group.
-        validate: value => void resolveMaxParallelToolCalls(value.maxParallelToolCalls),
+        validate: (value) => {
+          void resolveMaxParallelToolCalls(value.maxParallelToolCalls)
+          void resolveMaxStepsPerTurn(value.maxStepsPerTurn)
+        },
         setSource: (current) => {
           source = current
         },

@@ -14,7 +14,7 @@ function driverDone(agent: Agent): Promise<void> {
   return (agent as Agent & { done: Promise<void> }).done
 }
 
-async function harness(adapter: MockAdapter, persona = '') {
+async function harness(adapter: MockAdapter, persona = '', config: Record<string, unknown> = {}) {
   const ctx = new Context()
   await ctx.plugin(LlmRuntime)
   await ctx.plugin(SessionStore)
@@ -22,7 +22,7 @@ async function harness(adapter: MockAdapter, persona = '') {
   await ctx.plugin(SystemPrompt, { personaPrefix: persona })
   await ctx.plugin(ToolRuntime)
   await ctx.plugin(AgentRegistry)
-  await ctx.plugin(AgentLoop, { agents: [] })
+  await ctx.plugin(AgentLoop, { agents: [], ...config })
   ctx.llm.registerAdapter(['mock'], adapter)
   return ctx
 }
@@ -499,6 +499,34 @@ describe('agent loop', () => {
     const types = agent.session.snapshotEvents().map(e => e.type)
     expect(types).toContain('tool/call')
     expect(types).toContain('tool/result')
+  })
+
+  it('stops a model that only ever requests tools: the step cap ends the turn with a structured error', async () => {
+    // Six scripted tool-call responses against a cap of three: the turn
+    // must stop at the boundary instead of draining the script forever.
+    const responses = Array.from({ length: 6 }, (_, index) => toolCallResponse(`c${index}`, 'echo', { text: 'again' }))
+    const adapter = new MockAdapter(responses)
+    const ctx = await harness(adapter, '', { maxStepsPerTurn: 3 })
+    ctx.tools.register(defineContentToolFixture({
+      name: 'echo',
+      description: 'echo back',
+      parameters: { text: { type: 'string' } },
+      async execute(args) {
+        return [{ type: 'text', text: `echo: ${args.text}` }]
+      },
+    }))
+    const agent = await ctx.agentLoop.create(SessionId('a1'), { provider: 'mock', model: 'mock' })
+
+    send(agent, 'loop forever')
+    await waitForIdle(ctx, agent)
+
+    // Exactly the capped number of model calls ran, and the turn closed
+    // itself with the MAX_STEPS failure the UI can name for the user.
+    expect(adapter.requests).toHaveLength(3)
+    const turnEnd = agent.session.snapshotEvents().findLast(e => e.type === 'turn/end')
+    expect(turnEnd?.type === 'turn/end' && turnEnd.data.reason.kind === 'error'
+      ? turnEnd.data.reason.error
+      : undefined).toMatchObject({ code: 'MAX_STEPS' })
   })
 
   it('renders harness identity, then the persona, then tool guidance — with {{variables}} resolved', async () => {

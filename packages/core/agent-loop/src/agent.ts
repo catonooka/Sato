@@ -274,6 +274,16 @@ export class ReactLoopAgent implements Agent {
       while (true) {
         signal.throwIfAborted()
         const step = phase.step + 1
+        // A model that answers every step with more tool calls would spin
+        // forever: the step cap stops the turn at the next boundary with a
+        // structured error instead of an unbounded tool loop.
+        const maxStepsPerTurn = this.loopCtx.agentLoop.config.maxStepsPerTurn
+        if (step > maxStepsPerTurn) {
+          throw new LlmError(
+            `the turn was stopped after ${maxStepsPerTurn} model steps — the model kept calling tools without answering; try rephrasing or a different model`,
+            'MAX_STEPS',
+          )
+        }
         const decision = await this.preStep(target, { turn, step })
         if (decision.kind === 'reject') {
           turnEnds = { kind: 'blocked' }
