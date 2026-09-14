@@ -1221,9 +1221,18 @@ export default function App(): JSX.Element {
       entry.items = next
       if (activeIdRef.current === sessionId) setItems(next)
     }
+    // The server echoes the committed user row the moment a turn starts
+    // running. Refreshing the sidebar then — not only at turn end — makes a
+    // brand-new session listed at once, so leaving mid-turn never strands the
+    // chat outside the sidebar until it finishes.
+    let announcedStart = false
     const onEvent = (event: StreamEvent): void => {
       switch (event.t) {
         case 'user':
+          if (!announcedStart) {
+            announcedStart = true
+            refreshSessions()
+          }
           break
         case 'delta':
           entry.sawAssistant = true

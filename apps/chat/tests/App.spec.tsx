@@ -891,6 +891,32 @@ describe('parallel conversations', () => {
     await waitFor(() => { expect(document.querySelector('.caret')).toBeNull() })
   })
 
+  it('lists a brand-new chat in the sidebar the moment its first turn starts, not when it ends', async () => {
+    // The roster starts empty; the session row appears only in list calls
+    // made after the send — exactly what the server does when the turn's
+    // first event commits the chat.
+    const listed: { id: string; title: string; createdAt: number; updatedAt: number; live: boolean }[] = []
+    const { sessionListFetches } = await renderApp({
+      listSessionsFor: () => ({ sessions: [...listed], total: listed.length }),
+      streams: [timedSseResponse([
+        [{ t: 'user', text: 'hello there' }, 10],
+        [{ t: 'delta', text: 'still answering' }, 30],
+        [{ t: 'assistant', text: 'still answering' }, 1200],
+        [{ t: 'turn-end', reason: 'completed' }, 20],
+      ])],
+    })
+    listed.push({ id: 'fresh-1', title: 'hello there', createdAt: 1, updatedAt: 2, live: true })
+    const composer = screen.getByPlaceholderText<HTMLTextAreaElement>('Message Sato…')
+    fireEvent.change(composer, { target: { value: 'hello there' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    // The turn is still running (no turn-end yet), but the sidebar already
+    // lists the chat, so the user can leave and come back to it freely.
+    const row = await screen.findByTitle('hello there', {}, { timeout: 3000 })
+    expect(row).toBeDefined()
+    expect(sessionListFetches.length).toBeGreaterThanOrEqual(2)
+    await screen.findByText(/still answering/, {}, { timeout: 3000 })
+  })
+
   it('starts a new chat while a turn streams; the old one still completes', async () => {
     localStorage.setItem('dsh-chat-active', 'sess-a')
     await renderApp({
