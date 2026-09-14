@@ -165,13 +165,16 @@
     - id: web-search-tiny
       name: '@deepseek-ai/dsh-web-search-tiny'
 
-    # The one model-facing tool: tiny schema, internal question generator,
-    # timestamped sources.
+    # The one model-facing tool: tiny schema, timestamped sources. The
+    # internal question generator stays off in chat: it is pinned to a
+    # DeepSeek route that cannot exist on custom endpoints, so on any
+    # self-hosted base URL it would only stall every search until it
+    # times out — the model already sends a concise self-contained query.
     - id: tool-web-search-tiny
       name: '@deepseek-ai/dsh-tool-web-search-tiny'
       config:
         maxResults: 5
-        generateQuestion: true
+        generateQuestion: false
 
     # Enforce the tool's cooperative timeout budget.
     - id: timeout-policy

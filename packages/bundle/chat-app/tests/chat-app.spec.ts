@@ -3,9 +3,11 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { load } from 'js-yaml'
 import { describe, expect, it, afterEach } from 'vitest'
 import { ExtensionBridge } from '@deepseek-ai/dsh-web-search-chrome/src/bridge.ts'
 import {
@@ -287,6 +289,39 @@ describe('createUserChromeSearch', () => {
     const job = await created.nextJob(10)
     created.settle({ id: job?.id, ok: false, error: 'not logged in' })
     await expect(pending).rejects.toThrow('user-chrome: the extension search failed: not logged in')
+  })
+})
+
+describe('cordis.patch.yml tool mount', () => {
+  /** Depth-first search for the plugin node with the given id, wherever the
+   * patch tree nests it. */
+  function findPlugin(node: unknown, id: string): { config?: Record<string, unknown> } | undefined {
+    if (Array.isArray(node)) {
+      for (const item of node) {
+        const found = findPlugin(item, id)
+        if (found !== undefined) return found
+      }
+      return undefined
+    }
+    if (node !== null && typeof node === 'object') {
+      const record = node as Record<string, unknown>
+      if (record.id === id) return record as { config?: Record<string, unknown> }
+      for (const value of Object.values(record)) {
+        const found = findPlugin(value, id)
+        if (found !== undefined) return found
+      }
+    }
+    return undefined
+  }
+
+  it('mounts the search tool without the DeepSeek-pinned question generator', () => {
+    // The patch layer speaks schemastery's `!!js` tag, meaningless to plain
+    // yaml: strip the marker so the tree parses — only structure matters here.
+    const raw = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
+    const doc = load(raw.replace(/!!js /gu, ''))
+    const mount = findPlugin(doc, 'tool-web-search-tiny')
+    expect(mount).toBeDefined()
+    expect(mount?.config).toMatchObject({ maxResults: 5, generateQuestion: false })
   })
 })
 
