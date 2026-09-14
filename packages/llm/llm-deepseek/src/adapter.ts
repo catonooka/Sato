@@ -722,6 +722,9 @@ export class DeepSeekAdapter extends LlmAdapter {
         } catch {
           // The HTTP status remains authoritative when a gateway returns malformed JSON.
         }
+        // Every variant names the endpoint that answered, so the message
+        // relates to the provider actually in use.
+        message = `${message} (from ${connection.baseURL})`
         const detail = [providerError?.code, providerError?.type, providerError?.message]
           .filter((field): field is string => typeof field === 'string')
           .join(' ')
@@ -741,7 +744,7 @@ export class DeepSeekAdapter extends LlmAdapter {
         const delay = providerRetryAfterMs(response.headers.get('retry-after'))
         const id = requestId(response.headers)
         throw new LlmError(message, httpErrorCode(response.status, providerError), {
-          cause: new Error(rawResponse.length > 0 ? rawResponse : `DeepSeek HTTP ${response.status}`),
+          cause: new Error(rawResponse.length > 0 ? rawResponse : `HTTP ${response.status}`),
           status: response.status,
           ...delay === undefined ? {} : { providerRetryAfterMs: delay },
           ...id === undefined ? {} : { requestId: id },

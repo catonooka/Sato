@@ -585,7 +585,7 @@ describe('DeepSeekAdapter against a mock server', () => {
         content: [{ type: 'image', attachment: imageRef }],
         source: { kind: 'plugin', plugin: 'test' },
       })],
-    }))).rejects.toMatchObject({ code: 'SERVER', message: 'chat unavailable' })
+    }))).rejects.toMatchObject({ code: 'SERVER', message: `chat unavailable (from ${server.url})` })
 
     expect(server.requests).toHaveLength(1)
     expect(JSON.stringify(server.requests[0])).toContain('file-api-ready')
@@ -1047,7 +1047,7 @@ describe('DeepSeekAdapter against a mock server', () => {
         content: [{ type: 'image', attachment: imageRef }],
         source: { kind: 'plugin', plugin: 'test' },
       })],
-    }))).rejects.toMatchObject({ code: 'INVALID_REQUEST', message: 'file_id file-api-1 expired' })
+    }))).rejects.toMatchObject({ code: 'INVALID_REQUEST', message: `file_id file-api-1 expired (from ${server.url})` })
     expect(server.requests).toHaveLength(2)
     expect(server.fileRequests.filter(request => request.method === 'POST')).toHaveLength(2)
   })
@@ -1302,7 +1302,7 @@ describe('DeepSeekAdapter against a mock server', () => {
     const result = await assemble(ctx,{ model: 'deepseek-v4-flash', messages: [] })
     expect(result.finish).toEqual({
       kind: 'error',
-      failure: { message: `failed with ${status}`, code, status },
+      failure: { message: `failed with ${status} (from ${server.url})`, code, status },
     })
   })
 
@@ -1316,7 +1316,7 @@ describe('DeepSeekAdapter against a mock server', () => {
       messages: [],
     }))).rejects.toMatchObject({
       code: 'SERVER',
-      cause: { message: 'DeepSeek HTTP 500' },
+      cause: { message: 'HTTP 500' },
     })
   })
 
@@ -1352,7 +1352,7 @@ describe('DeepSeekAdapter against a mock server', () => {
     expect(result.finish).toEqual({
       kind: 'error',
       failure: {
-        message: 'slow down',
+        message: `slow down (from ${server.url})`,
         code: 'RATE_LIMIT',
         status: 429,
         providerRetryAfterMs: 2_000,
@@ -1379,7 +1379,7 @@ describe('DeepSeekAdapter against a mock server', () => {
       expect(result.finish).toEqual({
         kind: 'error',
         failure: {
-          message: 'come back later',
+          message: `come back later (from ${server.url})`,
           code: 'SERVER',
           status: 503,
           providerRetryAfterMs: 3_000,
@@ -1409,7 +1409,7 @@ describe('DeepSeekAdapter against a mock server', () => {
       const result = await assemble(ctx, { model: 'deepseek-v4-flash', messages: [] })
       expect(result.finish).toEqual({
         kind: 'error',
-        failure: { message: 'retry later', code: 'RATE_LIMIT', status: 429 },
+        failure: { message: `retry later (from ${server.url})`, code: 'RATE_LIMIT', status: 429 },
       })
     }
   })

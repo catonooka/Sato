@@ -35,6 +35,7 @@ import {
   parseSessionToken,
   parseSettingsFile,
   persistSettings,
+  agentErrorMessage,
   hasUsableCredentials,
   probeCacheKey,
   resolveProbeTarget,
@@ -642,6 +643,17 @@ describe('parseSettingsFile boot seeding', () => {
     const seeded = parseSettingsFile(undefined, { ...baseConfig, model: '' })
     expect(seeded.profiles[0]?.model).toBe('')
     expect(settingsJson(seeded, undefined).endpointReady).toBe(false)
+  })
+})
+
+describe('agentErrorMessage', () => {
+  it('leads with the character and endpoint the turn ran against', () => {
+    expect(agentErrorMessage(new Error('model API error (HTTP 404) (from http://192.168.1.105:8081/v1)'), {
+      name: 'local',
+      baseUrl: 'http://192.168.1.105:8081/v1',
+    })).toBe('local (http://192.168.1.105:8081/v1): model API error (HTTP 404) (from http://192.168.1.105:8081/v1)')
+    // No custom endpoint: the message still names the character, not a brand.
+    expect(agentErrorMessage('boom', { name: 'Default' })).toBe('Default (the default endpoint): boom')
   })
 })
 

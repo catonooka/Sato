@@ -256,6 +256,20 @@ export function hasUsableCredentials(
 const NO_ENDPOINT_ERROR = 'no endpoint configured — open Settings, add your base URL and API key, then try again'
 
 /**
+ * Name the provider a failed turn actually ran against: the character's own
+ * name and endpoint lead the message, so an error relates to where the
+ * request really went instead of reading like some default brand's voice.
+ * @param error - what the agent loop surfaced.
+ * @param profile - the active provider profile when the turn failed.
+ * @returns the message to show in the thread.
+ */
+export function agentErrorMessage(error: unknown, profile: { name: string; baseUrl?: string }): string {
+  const message = error instanceof Error ? error.message : String(error)
+  const endpoint = profile.baseUrl ?? 'the default endpoint'
+  return `${profile.name} (${endpoint}): ${message}`
+}
+
+/**
  * The chat app's credential plane. The settings panel owns every write: the
  * active profile's key is pushed into the live environment at boot and on
  * each settings save (`applyLiveModelSettings`), so resolving per call from
@@ -2438,7 +2452,7 @@ export function apply(ctx: Context, config: Config): void {
   ctx.on('agent/error', ({ agent, error }) => {
     broadcast(String(agent.session.id), {
       t: 'error',
-      message: error instanceof Error ? error.message : String(error),
+      message: agentErrorMessage(error, activeProfile(settings)),
     })
   })
 
