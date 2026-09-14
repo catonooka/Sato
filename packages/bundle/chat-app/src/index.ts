@@ -224,6 +224,24 @@ export function probeCacheKey(base: string, apiKey: string): string {
 }
 
 /**
+ * Whether the active route can authenticate — or deliberately needs no
+ * auth: a stored profile key, a custom endpoint (a local gateway may be
+ * keyless), or a launch-environment key all qualify. A fresh store has none
+ * of them, and sending then must fail with guidance toward Settings, not
+ * with the adapter's internal instruction to use a credentials service or
+ * export an environment variable in some other app.
+ */
+export function hasUsableCredentials(
+  profile: { apiKey?: string; baseUrl?: string },
+  envKey: string | undefined,
+): boolean {
+  return profile.apiKey !== undefined || profile.baseUrl !== undefined || envKey !== undefined
+}
+
+/** The refusal body every turn-start route answers while unconfigured. */
+const NO_ENDPOINT_ERROR = 'no endpoint configured — open Settings, add your base URL and API key, then try again'
+
+/**
  * The profile settings edits apply to: the active one, else the first — the
  * settings file always holds at least one, so this never misses.
  * @param settings - the settings in force.
@@ -836,12 +854,18 @@ export function parseSettingsFile(raw: string | undefined, defaults: Config): Ch
 
 /** Project settings into the JSON body served by `GET /api/config`. The
  * active profile supplies the flat fields; per-profile API keys never cross
- * to the browser, only their presence does. */
-export function settingsJson(settings: ChatSettings): Record<string, unknown> {
+ * to the browser, only their presence does. `endpointReady` tells the page
+ * whether a turn can run at all, so an unconfigured app can guide the user
+ * to Settings instead of surfacing the adapter's key error mid-send.
+ * @param settings - the live settings.
+ * @param envKey - the launch environment's API key, if one exists.
+ */
+export function settingsJson(settings: ChatSettings, envKey = process.env.DEEPSEEK_API_KEY): Record<string, unknown> {
   const active = activeProfile(settings)
   return {
     provider: settings.provider,
     model: active.model,
+    endpointReady: hasUsableCredentials(active, envKey),
     ...settings.reasoningEffort !== undefined ? { reasoningEffort: settings.reasoningEffort } : {},
     ...settings.temperature !== undefined ? { temperature: settings.temperature } : {},
     persona: personaOf(active),
@@ -2749,6 +2773,10 @@ export function apply(ctx: Context, config: Config): void {
         return
       }
       if (refuseForeignSession(sessionId)) return
+      if (req.method === 'POST' && !hasUsableCredentials(activeProfile(settings), process.env.DEEPSEEK_API_KEY)) {
+        sendJson(res, 400, { error: NO_ENDPOINT_ERROR })
+        return
+      }
       if (req.method === 'GET') {
         const surface = await ctx.sessionQuery.readSurface(SessionId(sessionId))
         const items: ChatItem[] = []
@@ -2891,6 +2919,10 @@ export function apply(ctx: Context, config: Config): void {
         return
       }
       if (refuseForeignSession(sessionId)) return
+      if (!hasUsableCredentials(activeProfile(settings), process.env.DEEPSEEK_API_KEY)) {
+        sendJson(res, 400, { error: NO_ENDPOINT_ERROR })
+        return
+      }
       const open = streams.get(sessionId)
       if (open !== undefined && open.size > 0) {
         sendJson(res, 409, { error: 'this conversation is still streaming' })

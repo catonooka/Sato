@@ -76,6 +76,7 @@ async function renderApp(options: {
   listSessionsFor?: (userId: string | undefined, archived: boolean) => { sessions: unknown[]; total: number }
   config?: Record<string, unknown>
   configPutError?: string
+  unconfigured?: boolean
 } = {}): Promise<{
   posts: { url: string; body: Record<string, unknown> }[]
   historyFetches: string[]
@@ -115,6 +116,7 @@ async function renderApp(options: {
   let configState: Record<string, unknown> = {
     provider: 'p',
     model: seedActive?.model ?? 'm',
+    endpointReady: options.unconfigured === true ? false : true,
     persona: seedActive?.persona ?? 'x',
     greeting: seedActive?.greeting ?? 'What can I help with?',
     ...seedActive?.avatar !== undefined ? { avatar: seedActive.avatar } : {},
@@ -1160,6 +1162,28 @@ describe('user profiles', () => {
     expect(screen.getByRole('button', { name: 'catonooka' })).toBeTruthy()
     expect(localStorage.getItem('dsh-chat-user')).toBe('u_main')
     expect(listHeaders[listHeaders.length - 1]).toBe('u_main')
+  })
+})
+
+describe('endpoint setup gate', () => {
+  it('refuses to send with guidance and opens settings while unconfigured', async () => {
+    const { posts } = await renderApp({ unconfigured: true })
+    const composer = screen.getByPlaceholderText<HTMLTextAreaElement>('Message Sato…')
+    fireEvent.change(composer, { target: { value: 'hello?' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    // The doomed send never leaves the page; Settings opens on the spot and
+    // the draft survives for after setup.
+    await screen.findByRole('dialog', { name: 'Settings' })
+    expect(screen.getByRole('alert').textContent).toContain('no endpoint configured')
+    expect(posts).toEqual([])
+    expect(composer.value).toBe('hello?')
+  })
+
+  it('invites connecting a model from the welcome screen', async () => {
+    await renderApp({ unconfigured: true })
+    expect(screen.getByRole('button', { name: /Connect a model/ })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /Connect a model/ }))
+    await screen.findByRole('dialog', { name: 'Settings' })
   })
 })
 

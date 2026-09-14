@@ -35,6 +35,7 @@ import {
   parseSessionToken,
   parseSettingsFile,
   persistSettings,
+  hasUsableCredentials,
   probeCacheKey,
   resolveProbeTarget,
   projectSurfaceEvent,
@@ -606,9 +607,10 @@ describe('model characters — persona and avatar', () => {
         { id: 'b', name: 'Gateway B', model: 'model-b' },
       ],
     }
-    expect(settingsJson(seeded)).toEqual({
+    expect(settingsJson(seeded, undefined)).toEqual({
       provider: 'deepseek-official',
       model: 'model-a',
+      endpointReady: true,
       persona: 'persona a',
       greeting: 'ask away',
       avatar: 12,
@@ -621,7 +623,23 @@ describe('model characters — persona and avatar', () => {
         { id: 'b', name: 'Gateway B', model: 'model-b', persona: DEFAULT_PERSONA, greeting: DEFAULT_GREETING, apiKeySet: false },
       ],
     })
-    expect(JSON.stringify(settingsJson(seeded))).not.toContain('key-a')
+    expect(JSON.stringify(settingsJson(seeded, undefined))).not.toContain('key-a')
+    // A bare store with no key anywhere reports itself unconfigured: the
+    // page then guides to Settings instead of surfacing a key error.
+    expect(settingsJson(baseSettings, undefined).endpointReady).toBe(false)
+    expect(settingsJson(baseSettings, 'env-key').endpointReady).toBe(true)
+  })
+})
+
+describe('hasUsableCredentials', () => {
+  it('accepts a profile key, a custom endpoint, or a launch key', () => {
+    expect(hasUsableCredentials({ apiKey: 'k' }, undefined)).toBe(true)
+    expect(hasUsableCredentials({ baseUrl: 'http://localhost:11434/v1' }, undefined)).toBe(true)
+    expect(hasUsableCredentials({}, 'launch-key')).toBe(true)
+  })
+
+  it('refuses a bare default route with no key anywhere', () => {
+    expect(hasUsableCredentials({}, undefined)).toBe(false)
   })
 })
 

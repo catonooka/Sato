@@ -1319,6 +1319,13 @@ export default function App(): JSX.Element {
     const outgoing = attachment
     const reply = replyTarget
     if ((text === '' && outgoing === undefined) || streaming) return
+    // An app with nothing configured cannot run a turn; guide to Settings
+    // instead of letting the adapter's internal key error surface here.
+    if (config?.endpointReady === false) {
+      setError('no endpoint configured — add your base URL and API key in Settings first')
+      setSettingsOpen(true)
+      return
+    }
     // The bytes upload once, raw; only the durable reference rides the
     // message. A failed upload leaves the attachment in the composer.
     let uploaded: UploadedAttachment | undefined
@@ -1355,7 +1362,7 @@ export default function App(): JSX.Element {
     const base = [...items, userItem]
     setItems(base)
     await runTurn(onEvent => sendMessage(activeId, text, uploaded, reply, onEvent), activeId, base)
-  }, [activeId, attachment, draft, items, replyTarget, runTurn, streaming])
+  }, [activeId, attachment, config, draft, items, replyTarget, runTurn, streaming])
 
   /** Drop the pending attachment, releasing its preview URL. */
   const removeAttachment = useCallback((): void => {
@@ -1619,9 +1626,19 @@ export default function App(): JSX.Element {
                   <img src={botAvatar} alt="" draggable={false} />
                 </button>
                 <div className="welcome-title">{config?.greeting ?? 'What can I help with?'}</div>
-                {activeCharacter !== undefined
-                  ? <div className="welcome-sub">{activeCharacter.name}</div>
-                  : undefined}
+                {config?.endpointReady === false
+                  ? (
+                    <button
+                      type="button"
+                      className="welcome-connect"
+                      onClick={() => { setSettingsOpen(true) }}
+                    >
+                      Connect a model — add your endpoint and key
+                    </button>
+                  )
+                  : activeCharacter !== undefined
+                    ? <div className="welcome-sub">{activeCharacter.name}</div>
+                    : undefined}
               </div>
             )
             : (

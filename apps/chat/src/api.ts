@@ -84,6 +84,9 @@ export interface AppConfig {
   avatar?: number
   baseUrl?: string
   apiKeySet?: boolean
+  /** False while no endpoint is configured at all (no key anywhere, no
+   * custom base URL): sends are refused with guidance to open Settings. */
+  endpointReady?: boolean
   searchTool?: string
   autoCompact?: boolean
   activeProfileId?: string
