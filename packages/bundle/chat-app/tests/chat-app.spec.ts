@@ -628,18 +628,34 @@ describe('model characters — persona and avatar', () => {
     // page then guides to Settings instead of surfacing a key error.
     expect(settingsJson(baseSettings, undefined).endpointReady).toBe(false)
     expect(settingsJson(baseSettings, 'env-key').endpointReady).toBe(true)
+    // An empty model is unconfigured too: the profile claims nothing.
+    const modelless: ChatSettings = {
+      ...baseSettings,
+      profiles: [{ id: 'default', name: 'Default', model: '', apiKey: 'key-a' }],
+    }
+    expect(settingsJson(modelless, undefined).endpointReady).toBe(false)
+  })
+})
+
+describe('parseSettingsFile boot seeding', () => {
+  it('seeds an empty model on a fresh store so nothing pretends to be configured', () => {
+    const seeded = parseSettingsFile(undefined, { ...baseConfig, model: '' })
+    expect(seeded.profiles[0]?.model).toBe('')
+    expect(settingsJson(seeded, undefined).endpointReady).toBe(false)
   })
 })
 
 describe('hasUsableCredentials', () => {
   it('accepts a profile key, a custom endpoint, or a launch key', () => {
-    expect(hasUsableCredentials({ apiKey: 'k' }, undefined)).toBe(true)
-    expect(hasUsableCredentials({ baseUrl: 'http://localhost:11434/v1' }, undefined)).toBe(true)
-    expect(hasUsableCredentials({}, 'launch-key')).toBe(true)
+    expect(hasUsableCredentials({ model: 'm', apiKey: 'k' }, undefined)).toBe(true)
+    expect(hasUsableCredentials({ model: 'm', baseUrl: 'http://localhost:11434/v1' }, undefined)).toBe(true)
+    expect(hasUsableCredentials({ model: 'm' }, 'launch-key')).toBe(true)
   })
 
-  it('refuses a bare default route with no key anywhere', () => {
-    expect(hasUsableCredentials({}, undefined)).toBe(false)
+  it('refuses a bare default route with no key anywhere, and an empty model', () => {
+    expect(hasUsableCredentials({ model: 'm' }, undefined)).toBe(false)
+    expect(hasUsableCredentials({ model: '', apiKey: 'k' }, 'launch-key')).toBe(false)
+    expect(hasUsableCredentials({ model: '  ' }, 'launch-key')).toBe(false)
   })
 })
 

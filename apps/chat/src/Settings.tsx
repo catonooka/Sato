@@ -466,6 +466,7 @@ export function SettingsPanel({
               type="text"
               value={model}
               spellCheck={false}
+              placeholder="pick or type a model"
               onChange={(event) => { setModel(event.target.value) }}
             />
             <button

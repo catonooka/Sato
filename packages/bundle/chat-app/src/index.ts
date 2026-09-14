@@ -57,6 +57,16 @@ import { CONTEXT_WINDOW_EXCEEDED_CODE, createUserMessage, ReasoningEffortId, typ
 import { isCompactCheckpointSource, ManualCompactionError } from '@deepseek-ai/dsh-compaction'
 import type { ImageAttachmentRef } from '@deepseek-ai/dsh-attachment'
 import { SessionId, type SessionEvent } from '@deepseek-ai/dsh-session'
+import {
+  CredentialProvider,
+  type CredentialInfo,
+  type CredentialKey,
+  type CredentialRecord,
+  type CredentialRecordEntry,
+  type CredentialRecordInfo,
+  type CredentialRef,
+  type ResolvedCredential,
+} from '@deepseek-ai/dsh-credentials'
 import { SessionQueryError, SessionSearchCursor, type SessionRecord, type SessionSearchHit } from '@deepseek-ai/dsh-session-query'
 import type { AgentHandle } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-host-webserver'
@@ -113,7 +123,9 @@ export const Config: z<Config> = z.object({
   openBrowser: z.boolean().default(true),
   printUrl: z.boolean().default(true),
   provider: z.string().default('deepseek-official'),
-  model: z.string().default('deepseek-chat'),
+  // Empty until the user picks one: a fresh store claims no model, and the
+  // endpoint gate treats an empty model as unconfigured.
+  model: z.string().default(''),
   reasoningEffort: z.union([z.const('off'), z.const('low'), z.const('high'), z.const('max')]),
   temperature: z.number().min(0).max(2),
   persona: z.string().default(DEFAULT_PERSONA),
@@ -224,22 +236,78 @@ export function probeCacheKey(base: string, apiKey: string): string {
 }
 
 /**
- * Whether the active route can authenticate — or deliberately needs no
- * auth: a stored profile key, a custom endpoint (a local gateway may be
- * keyless), or a launch-environment key all qualify. A fresh store has none
- * of them, and sending then must fail with guidance toward Settings, not
- * with the adapter's internal instruction to use a credentials service or
- * export an environment variable in some other app.
+ * Whether the active route can run a turn at all: it needs a model, and it
+ * needs authentication — or a deliberate reason to need none: a stored
+ * profile key, a custom endpoint (a local gateway may be keyless), or a
+ * launch-environment key. A fresh store has neither and stays empty until
+ * the user configures it; sending then fails with guidance toward Settings,
+ * not with the adapter's internal instruction to use a credentials service
+ * or export an environment variable in some other app.
  */
 export function hasUsableCredentials(
-  profile: { apiKey?: string; baseUrl?: string },
+  profile: { model: string; apiKey?: string; baseUrl?: string },
   envKey: string | undefined,
 ): boolean {
+  if (profile.model.trim() === '') return false
   return profile.apiKey !== undefined || profile.baseUrl !== undefined || envKey !== undefined
 }
 
 /** The refusal body every turn-start route answers while unconfigured. */
 const NO_ENDPOINT_ERROR = 'no endpoint configured — open Settings, add your base URL and API key, then try again'
+
+/**
+ * The chat app's credential plane. The settings panel owns every write: the
+ * active profile's key is pushed into the live environment at boot and on
+ * each settings save (`applyLiveModelSettings`), so resolving per call from
+ * the live environment makes a key entered in Settings reach the very next
+ * request — the adapter's own fallback reads only a launch-time snapshot,
+ * which is why a saved key used to need a restart that still never came.
+ * Reads only; every mutating member refuses.
+ */
+class SettingsCredentialsProvider extends CredentialProvider {
+  override resolve(ref: CredentialRef): Promise<ResolvedCredential | undefined> {
+    const value = process.env[ref]
+    return Promise.resolve(value === undefined || value === '' ? undefined : { value, source: 'env' })
+  }
+
+  override describe(ref: CredentialRef): Promise<CredentialInfo> {
+    const value = process.env[ref]
+    return Promise.resolve(value === undefined || value === ''
+      ? { configured: false, writable: false }
+      : { configured: true, source: 'env', writable: false })
+  }
+
+  override set(_ref: CredentialRef, _value: string): Promise<void> {
+    return Promise.reject(new Error('chat credentials are read-only — set the API key in Settings'))
+  }
+
+  override unset(_ref: CredentialRef): Promise<void> {
+    return Promise.reject(new Error('chat credentials are read-only — clear the API key in Settings'))
+  }
+
+  override readRecord(_key: CredentialKey): Promise<CredentialRecord | undefined> {
+    return Promise.resolve(undefined)
+  }
+
+  override describeRecord(_key: CredentialKey): Promise<CredentialRecordInfo> {
+    return Promise.resolve({ configured: false, writable: false })
+  }
+
+  override listRecords(): Promise<readonly CredentialRecordEntry[]> {
+    return Promise.resolve([])
+  }
+
+  override modifyRecord(
+    _key: CredentialKey,
+    _mutate: (current: CredentialRecord | undefined) => Promise<CredentialRecord | undefined>,
+  ): Promise<CredentialRecord | undefined> {
+    return Promise.reject(new Error('chat credentials are read-only'))
+  }
+
+  override deleteRecord(_key: CredentialKey): Promise<void> {
+    return Promise.reject(new Error('chat credentials are read-only'))
+  }
+}
 
 /**
  * The profile settings edits apply to: the active one, else the first — the
@@ -1785,6 +1853,11 @@ export function apply(ctx: Context, config: Config): void {
   // The launching environment is the fallback the panel edits override.
   const bootApiKeyEnv = process.env.DEEPSEEK_API_KEY
   const bootBaseUrlEnv = process.env.DEEPSEEK_BASE_URL
+  // The credentials seam llm-deepseek resolves its key through: per-call
+  // reads of the live environment, which applyLiveModelSettings keeps in
+  // step with the saved profile, so Settings edits apply to the next request
+  // without a restart.
+  new SettingsCredentialsProvider(ctx)
 
   // Lightweight app users: named profiles sharing the one login token, each
   // with their own chats, groups, and Chrome-profile preference. A missing or

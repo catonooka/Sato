@@ -186,7 +186,9 @@
         openBrowser: !!js ctx.webStartup.openBrowser
         printUrl: true
         provider: !!js process.env.DSH_CHAT_PROVIDER ?? 'deepseek-official'
-        model: !!js process.env.DSH_CHAT_MODEL ?? 'deepseek-chat'
+        # Empty until the user picks one; the endpoint gate treats a bare
+        # model as unconfigured, so a fresh store claims nothing.
+        model: !!js process.env.DSH_CHAT_MODEL ?? ''
         reasoningEffort: !!js (process.env.DSH_CHAT_REASONING || undefined)
         temperature: !!js "process.env.DSH_CHAT_TEMPERATURE ? Number(process.env.DSH_CHAT_TEMPERATURE) : undefined"
         persona: !!js process.env.DSH_CHAT_PERSONA ?? 'You are a helpful assistant.'
