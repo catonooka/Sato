@@ -241,7 +241,7 @@ describe('bounded retry through the real DeepSeek HTTP/SSE adapter', () => {
       data: { reason: { kind: 'error', error: { code: 'TRANSPORT' } } },
     })
     if (end?.type === 'turn/end' && end.data.reason.kind === 'error') {
-      expect(end.data.reason.error.message).toContain('DeepSeek API request to')
+      expect(end.data.reason.error.message).toContain('model API request to')
     }
   })
 })
