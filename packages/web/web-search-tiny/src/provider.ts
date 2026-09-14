@@ -114,11 +114,15 @@ export function mergeResults(
 /**
  * The keyless metasearch provider. `available()` is always true — the engines
  * need no configuration, and engine-level failures degrade into fewer results
- * (or one structured `WEB_PROVIDER_ERROR` when every engine failed).
+ * (or one structured `WEB_PROVIDER_ERROR` when every engine failed). Engines
+ * that answered with nothing still count as answered: an honest empty page
+ * beats an error the model would retry into a rate limit.
  *
  * Identical queries within a short window reuse the previous results: the
  * keyless DDG HTML endpoint is rate-limit prone, and model retries re-ask
- * the same question within seconds. Failures are never cached.
+ * the same question within seconds. Failures are never cached, but a failed
+ * engine sits out a short backoff window so a burst of retries cannot keep
+ * hammering the endpoint that just refused.
  */
 export class TinyMetasearchProvider implements WebSearchProvider {
   readonly id = TINY_PROVIDER_ID
@@ -126,12 +130,20 @@ export class TinyMetasearchProvider implements WebSearchProvider {
   /** Result cache window and size. */
   private static readonly CACHE_TTL_MS = 60_000
   private static readonly CACHE_MAX = 32
+  /** How long one failed engine sits out before the provider asks it again. */
+  private static readonly ENGINE_BACKOFF_MS = 30_000
   private readonly cache = new Map<string, { at: number; value: WebSearchResult }>()
+  private readonly engineBlockedUntil = new Map<string, number>()
 
   constructor(private readonly options: TinyMetasearchOptions) {}
 
   available(): boolean {
     return true
+  }
+
+  /** Whether an engine may be asked right now: false inside its backoff. */
+  private enginePlaying(name: string): boolean {
+    return Date.now() >= (this.engineBlockedUntil.get(name) ?? 0)
   }
 
   async search(request: WebSearchRequest, signal?: AbortSignal): Promise<WebSearchResult> {
@@ -142,11 +154,18 @@ export class TinyMetasearchProvider implements WebSearchProvider {
       return cached.value
     }
     const cancelled = signal ?? new AbortController().signal
-    const engines: { name: string; run: () => Promise<WebSearchSource[]> }[] = [
-      { name: 'duckduckgo', run: () => searchDuckDuckGo(request.query, cancelled, this.options.timeoutMs) },
-    ]
-    if (this.options.wikipedia) {
+    const engines: { name: string; run: () => Promise<WebSearchSource[]> }[] = []
+    if (this.enginePlaying('duckduckgo')) {
+      engines.push({ name: 'duckduckgo', run: () => searchDuckDuckGo(request.query, cancelled, this.options.timeoutMs) })
+    }
+    if (this.options.wikipedia && this.enginePlaying('wikipedia')) {
       engines.push({ name: 'wikipedia', run: () => searchWikipedia(request.query, cancelled, this.options.timeoutMs) })
+    }
+    if (engines.length === 0) {
+      throw new WebError(
+        'tiny metasearch engines are in failure backoff; retry in a moment',
+        'WEB_PROVIDER_ERROR',
+      )
     }
     const settled = await Promise.allSettled(engines.map(engine => engine.run()))
     const primary: WebSearchSource[] = []
@@ -156,11 +175,15 @@ export class TinyMetasearchProvider implements WebSearchProvider {
       if (outcome.status === 'fulfilled') {
         (index === 0 ? primary : secondary).push(...outcome.value)
       } else {
+        const engine = engines[index]
         const reason = outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason)
-        failures.push(`${engines[index]?.name ?? 'engine'}: ${reason}`)
+        failures.push(`${engine?.name ?? 'engine'}: ${reason}`)
+        if (engine !== undefined) {
+          this.engineBlockedUntil.set(engine.name, Date.now() + TinyMetasearchProvider.ENGINE_BACKOFF_MS)
+        }
       }
     })
-    if (primary.length === 0 && secondary.length === 0) {
+    if (settled.every(outcome => outcome.status === 'rejected')) {
       throw new WebError(
         `tiny metasearch produced no results (${failures.join('; ')})`,
         'WEB_PROVIDER_ERROR',

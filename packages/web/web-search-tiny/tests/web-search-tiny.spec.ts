@@ -3,7 +3,7 @@
  * unwrapping, entity decoding, Wikipedia mapping, and merge/dedup.
  */
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   TinyMetasearchProvider,
   decodeEntities,
@@ -214,14 +214,15 @@ describe('mergeResults — corners', () => {
   })
 })
 
-describe('TinyMetasearchProvider result cache', () => {
-  const serp = (marker: string): string => `
+/** One minimal DuckDuckGo result block, shared by the provider describes. */
+const serp = (marker: string): string => `
 <div class="result results_links results_links_deep web-result">
   <h2 class="result__title"><a class="result__a" href="https://example.com/${marker}">${marker}</a></h2>
   <a class="result__snippet" href="https://example.com/${marker}">snippet ${marker}</a>
 </div>
 `
 
+describe('TinyMetasearchProvider result cache', () => {
   it('serves a repeat query from cache without refetching the engines', async () => {
     const fetched: string[] = []
     const originalFetch = globalThis.fetch
@@ -264,6 +265,73 @@ describe('TinyMetasearchProvider result cache', () => {
       expect(fetched.filter(url => url.includes('duckduckgo'))).toHaveLength(2)
     } finally {
       globalThis.fetch = originalFetch
+    }
+  })
+})
+
+describe('TinyMetasearchProvider degradation', () => {
+  /** Stub fetch with per-engine behaviors; record every engine call. */
+  function stubEngines(fetched: string[], duckduckgo: () => Response, wikipedia: () => Response): void {
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = String(input)
+      fetched.push(url)
+      return url.includes('duckduckgo') ? duckduckgo() : wikipedia()
+    }) as typeof fetch
+  }
+
+  it('answers with an honest empty page when engines answer but find nothing', async () => {
+    const fetched: string[] = []
+    const originalFetch = globalThis.fetch
+    stubEngines(fetched, () => new Response('', { status: 200 }), () => new Response(JSON.stringify({ query: { search: [] } }), { status: 200 }))
+    try {
+      const provider = new TinyMetasearchProvider({ timeoutMs: 1000, wikipedia: true })
+      await expect(provider.search({ query: 'obscure nothing query', maxResults: 5 })).resolves.toEqual({ sources: [], truncated: false })
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('fails only when every engine failed', async () => {
+    const originalFetch = globalThis.fetch
+    stubEngines([], () => new Response('no', { status: 403 }), () => new Response('no', { status: 503 }))
+    try {
+      const provider = new TinyMetasearchProvider({ timeoutMs: 1000, wikipedia: true })
+      await expect(provider.search({ query: 'anything', maxResults: 5 })).rejects.toThrow(/produced no results/)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('backs a failed engine off instead of re-hammering it, then asks again after the window', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-01-01T00:00:00Z'))
+    const fetched: string[] = []
+    const originalFetch = globalThis.fetch
+    let duckduckgoFails = true
+    stubEngines(
+      fetched,
+      () => duckduckgoFails ? new Response('rate limited', { status: 403 }) : new Response(serp('recovered'), { status: 200 }),
+      () => new Response(JSON.stringify({ query: { search: [{ ns: 0, title: 'Wiki hit', snippet: 'wiki', timestamp: '2026-01-01T00:00:00Z', pageid: 1 }] } }), { status: 200 }),
+    )
+    try {
+      const provider = new TinyMetasearchProvider({ timeoutMs: 1000, wikipedia: true })
+      // First search: DDG refuses, Wikipedia alone answers the turn.
+      const first = await provider.search({ query: 'solar park expansion', maxResults: 5 })
+      expect(first.sources.map(source => source.title)).toEqual(['Wiki hit'])
+      const ddgCallsAfterFirst = fetched.filter(url => url.includes('duckduckgo')).length
+      // A different query inside the backoff window: DDG is skipped whole.
+      const second = await provider.search({ query: 'wind farm expansion', maxResults: 5 })
+      expect(second.sources.map(source => source.title)).toEqual(['Wiki hit'])
+      expect(fetched.filter(url => url.includes('duckduckgo')).length).toBe(ddgCallsAfterFirst)
+      // Past the window, the engine is asked again — and now it answers.
+      duckduckgoFails = false
+      vi.advanceTimersByTime(31_000)
+      const third = await provider.search({ query: 'geothermal expansion', maxResults: 5 })
+      expect(fetched.filter(url => url.includes('duckduckgo')).length).toBe(ddgCallsAfterFirst + 1)
+      expect(third.sources.map(source => source.title)).toEqual(['recovered', 'Wiki hit'])
+    } finally {
+      globalThis.fetch = originalFetch
+      vi.useRealTimers()
     }
   })
 })
