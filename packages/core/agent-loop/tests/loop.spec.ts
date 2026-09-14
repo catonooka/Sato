@@ -529,6 +529,36 @@ describe('agent loop', () => {
       : undefined).toMatchObject({ code: 'MAX_STEPS' })
   })
 
+  it('drops a step-scoped forced tool choice from later step seeds', async () => {
+    // One hook forces `echo` on step 1; the persisted header would otherwise
+    // re-seed that choice onto every later step — where a host may not even
+    // offer the tool anymore.
+    const adapter = new MockAdapter([
+      toolCallResponse('c1', 'echo', { text: 'x' }),
+      textResponse('done'),
+    ])
+    const ctx = await harness(adapter)
+    ctx.tools.register(defineContentToolFixture({
+      name: 'echo',
+      description: 'echo back',
+      parameters: { text: { type: 'string' } },
+      async execute(args) {
+        return [{ type: 'text', text: `echo: ${args.text}` }]
+      },
+    }))
+    ctx.on('agent/request', async (payload, next) => {
+      const base = await next()
+      return payload.step === 1 ? { ...base, toolChoice: { name: 'echo' } } : base
+    })
+    const agent = await ctx.agentLoop.create(SessionId('a1'), { provider: 'mock', model: 'mock' })
+
+    send(agent, 'use the tool')
+    await waitForIdle(ctx, agent)
+
+    expect(adapter.requests[0]!.toolChoice).toEqual({ name: 'echo' })
+    expect(adapter.requests[1]!.toolChoice).toBeUndefined()
+  })
+
   it('turns the step cap into a forced final answer instead of an error', async () => {
     // Two tool-call steps against a cap of three: the third step must run
     // without tools and carry the answer-now nudge, so the model's gathered

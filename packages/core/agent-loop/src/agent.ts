@@ -90,10 +90,13 @@ type PreparedStep =
     assembly: PromptAssembly
   }
 
-/** Remove adapter-derived values before plugins propose the next request config. */
+/** Remove per-call and adapter-derived values before plugins propose the next
+ * request config: a forced `toolChoice` belongs to the step that set it, not
+ * to every later seed (a later step may not even offer that tool). */
 function requestProposal(header: EpochHeader): LlmCallConfig {
-  if (header.adapterDefaults === undefined) return header.config
   const proposal = { ...header.config }
+  delete proposal.toolChoice
+  if (header.adapterDefaults === undefined) return proposal
   if (header.adapterDefaults.reasoningEffort === true) delete proposal.reasoningEffort
   if (header.adapterDefaults.maxTokens === true) delete proposal.maxTokens
   return proposal

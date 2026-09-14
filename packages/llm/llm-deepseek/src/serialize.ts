@@ -405,9 +405,11 @@ function requestWithMessages(
       ? { reasoning_effort: resolvedThinking.reasoningEffort }
       : {},
     ...tools !== undefined && tools.length > 0 ? { tools } : {},
-    // A forced choice is meaningless without tools on the wire, so it rides
-    // only when the request actually carries a tool list.
-    ...options.toolChoice !== undefined && tools !== undefined && tools.length > 0
+    // A forced choice is meaningless without the named tool on the wire —
+    // and providers reject the mismatch outright — so it rides only when the
+    // request actually offers that tool.
+    ...options.toolChoice !== undefined
+      && tools?.some(tool => tool.function.name === options.toolChoice?.name) === true
       ? { tool_choice: { type: 'function', function: { name: options.toolChoice.name } } }
       : {},
     ...options.temperature !== undefined ? { temperature: options.temperature } : {},

@@ -296,13 +296,18 @@ describe('serializeRequest', () => {
     expect(speaksChatTemplateDialect('not a url')).toBe(false)
   })
 
-  it('maps a forced tool choice onto the wire, but only with tools present', () => {
+  it('maps a forced tool choice onto the wire, but only with the named tool present', () => {
     const tools = [{ name: 'web_search', description: 'search', parameters: { type: 'object', properties: {} } }]
     const wire = serializeRequest(request({ messages: history, tools, toolChoice: { name: 'web_search' } }))
     expect(wire.tool_choice).toEqual({ type: 'function', function: { name: 'web_search' } })
     // Without a tool list the forced choice is meaningless and stays off.
     const bare = serializeRequest(request({ messages: history, toolChoice: { name: 'web_search' } }))
     expect(bare.tool_choice).toBeUndefined()
+    // A choice naming a tool the request does not offer would be rejected by
+    // the provider; it stays off rather than failing the whole call.
+    const otherTools = [{ name: 'web_fetch', description: 'fetch', parameters: { type: 'object', properties: {} } }]
+    const mismatched = serializeRequest(request({ messages: history, tools: otherTools, toolChoice: { name: 'web_search' } }))
+    expect(mismatched.tool_choice).toBeUndefined()
   })
 
   it.each(['low', 'high', 'max'] as const)('maps adapter-default thinking and request effort %s', (effort) => {
