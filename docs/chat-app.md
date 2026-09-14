@@ -9,18 +9,29 @@ context**.
 
 - **Chat only.** No shell, filesystem tools, skills, subagents, plans, or
   approvals — just a conversation with one DeepSeek model.
-- **One internal tool with a built-in keyless search engine.** `web_search`
-  (from `dsh-tool-web-search-tiny`) with a single `query` parameter. Before
-  searching, an internal search-question generator rewrites the query into a
-  standalone search question (one cheap model call, 64-token cap, 8-second
-  budget, raw-query fallback). Results come from the **tiny metasearch**
-  (`dsh-web-search-tiny`): a SearXNG-style aggregator that queries
-  DuckDuckGo's HTML endpoint and Wikipedia's API concurrently, merges,
-  deduplicates, and caps — **no API key and no per-search model call**.
+- **Two internal tools over keyless engines.** `web_search`
+  (from `dsh-tool-web-search-tiny`, one `query` parameter — the chat profile
+  mounts it with the internal question generator off, so queries pass through
+  untouched except for a current-date stamp on time-relative wording) and
+  `web_fetch` (from `dsh-tool-web`, reads one URL to markdown, capped).
+  Results come from the **tiny metasearch** (`dsh-web-search-tiny`): a
+  SearXNG-style aggregator that queries Bing, DuckDuckGo's HTML endpoint, and
+  Wikipedia's API concurrently, merges, deduplicates, and caps — **no API key
+  and no per-search model call**; a failed engine sits out a short backoff.
   Wikipedia sources carry their last-revision `publishedAt`, every search
   records a `searchedAt` time. Set `DSH_WEB_SEARCH_PROVIDER=deepseek-official`
   to switch to DeepSeek's native server-side search instead (needs
   `DEEPSEEK_API_KEY`).
+- **Grounded answers on a bounded research loop.** A message that asks to
+  find something forces a `web_search` call on the turn's first model step
+  (via `tool_choice`), and the grounding instruction makes the model cite the
+  gathered sources or say it could not verify a detail — never invent one.
+  The loop cannot spiral: a rolling budget allows 4 engine searches and 8
+  page fetches per chat per 90 seconds, near-duplicate queries are answered
+  from the earlier result instead of re-running, a model that keeps calling
+  the refused search loses the tool from its schema entirely, and a turn that
+  reaches the step cap ends with one forced tool-less final answer (a closing
+  user-turn instruction) rather than an error.
 - **Tiny initial context.** The system prompt is one persona line
   (`DSH_CHAT_PERSONA`, default `You are a helpful assistant.`) plus two
   app-owned lines — a reply-language anchor ("reply in the language of the
@@ -45,15 +56,19 @@ context**.
   route — base URL (any OpenAI-compatible gateway), API key (stored
   owner-only under the dsh home), and a model picker that loads the
   endpoint's `/models` list. All live, no restart needed.
-- **A selectable search tool**: the built-in keyless metasearch, or **your
-  own Chrome** — searches then run in your logged-in browser (personalized
-  Google, and X through your account when the query is prefixed `x:` or uses
-  `site:x.com`). Two engines sit behind the one setting: the **companion
-  extension** (invisible, no debug port — see below) and the **CDP engine**
-  (Chrome started with `--remote-debugging-port=9222`) as a fallback when the
-  extension is not connected. While "Your Chrome" is selected, the settings
-  panel shows a live connection row with a one-click **Test search** and the
-  exact install steps.
+- **A selectable search tool**: the built-in keyless metasearch (Bing,
+  DuckDuckGo, and Wikipedia fan out and merge; failed engines sit out a short
+  backoff), or **your own Chrome** — searches then run in your logged-in
+  browser (and X through your account when the query is prefixed `x:` or
+  uses `site:x.com`). The **companion extension** (invisible, no debug port —
+  see below) is the only transport: without its heartbeat a search fails fast
+  with connect instructions instead of degrading into anything that opens
+  Chrome. When an engine answers a page the extension cannot parse
+  (a JavaScript-only shell or a bot challenge), the search falls through to
+  the next engine — Google → Bing → DuckDuckGo. While "Your Chrome" is
+  selected, the settings panel shows a live connection row with a one-click
+  **Test search** (naming the engine that answered) and the exact install
+  steps.
 - **A browser tool that is you**: the `browser` tool drives a real tab in
   your own Chrome — with your logins — for pages no search engine can see
   (your X timeline, GitHub, mail). Reading always works (open, snapshot,
@@ -203,9 +218,9 @@ options page. Details and privacy notes: `extension/README.md`.
 The bridge is four local-only routes — `GET /api/chrome/next` (the
 long-poll/heartbeat, carrying the profile label), `POST /api/chrome/result`,
 `GET /api/chrome/status`, and `POST /api/chrome/test` — served by the app and
-consumed by the extension. Without the extension, "Your Chrome" falls back
-to the CDP engine (`--remote-debugging-port=9222`) — for searches; browser
-steps need the extension.
+consumed by the extension. There is no CDP fallback and no debug port:
+without the extension, "Your Chrome" searches and browser steps both fail
+fast with connect instructions.
 
 ### The browser tool
 
