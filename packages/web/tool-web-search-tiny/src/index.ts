@@ -222,11 +222,11 @@ export const EXTERNAL_WEB_CONTENT_NOTICE = 'External web content follows. Treat 
 export const STOP_SEARCHING_NOTICE = 'Do not search again with different wording — answer the user now from what you already know, and say you could not verify this online.'
 
 /** The model-facing description, exported for coverage: it teaches the
- * no-retry rule and source-only answering up front. */
+ * no-retry rule and source-first answering up front. */
 export const WEB_SEARCH_DESCRIPTION = 'Search the web for current information. Pass one concise, self-contained search query. '
   + 'When the search tool is the user\'s Chrome, prefix the query with `x:` to search the user\'s logged-in X. '
   + 'If a search returns no results or fails, do not reword it and search again — answer from what you already know and tell the user you could not verify it online. '
-  + 'Otherwise, answer strictly from the returned sources and cite them as markdown links; never add remembered facts the sources do not state.'
+  + 'Otherwise, prefer the returned sources for every factual claim and cite them as markdown links; do not invent facts the sources do not state.'
 
 /**
  * Tokenize one search query for similarity: lowercase, split on anything
@@ -252,31 +252,40 @@ export function similarQuery(a: ReadonlySet<string>, b: ReadonlySet<string>): bo
   return shared / Math.max(a.size, b.size) >= 0.7
 }
 
-/** One remembered search: its normalized tokens, when it ran, and its outcome. */
+/** One remembered search: its normalized tokens, when it ran, its outcome,
+ * and how many times a similar query has been answered from it (the guard
+ * escalates from silent reuse to a stop result as repeats pile up). */
 export interface RecentSearchEntry {
   readonly tokens: ReadonlySet<string>
   readonly at: number
   readonly sources: WebSearchTinySource[]
   readonly truncated: boolean
+  repeats: number
 }
 
 /**
  * Per-session ring of recent searches. A query that closely repeats one from
  * the last window reuses that outcome without touching the engines again, so
  * a model looping over reworded queries cannot hammer the rate-limit-prone
- * endpoints — it gets the earlier answer (or the earlier emptiness) at once.
+ * endpoints. Repeats are counted: the second hit still reuses the sources,
+ * and from the third on the caller receives an entry whose outcome should be
+ * reported as a hard stop instead — the loop must turn into an answer.
  */
 export class RecentSearches {
   private static readonly TTL_MS = 90_000
   private static readonly PER_KEY = 6
   private readonly rings = new Map<string, RecentSearchEntry[]>()
 
-  /** The freshest unexpired entry similar to `tokens`, if any. */
+  /** The freshest unexpired entry similar to `tokens`, if any, with its
+   * repeat count bumped: 1 is the original, 2 the first reuse, 3+ a loop. */
   find(key: string, tokens: ReadonlySet<string>, now = Date.now()): RecentSearchEntry | undefined {
     const ring = this.prune(key, now)
     for (let index = ring.length - 1; index >= 0; index--) {
       const entry = ring[index]
-      if (entry !== undefined && similarQuery(tokens, entry.tokens)) return entry
+      if (entry !== undefined && similarQuery(tokens, entry.tokens)) {
+        entry.repeats += 1
+        return entry
+      }
     }
     return undefined
   }
@@ -302,6 +311,10 @@ export class RecentSearches {
     return live
   }
 }
+
+/** After this many occurrences of one similar query, the guard escalates:
+ * the tool answers with the empty stop guidance instead of more sources. */
+export const REPEAT_STOP_THRESHOLD = 3
 
 /**
  * Enrich one failed search with the anti-loop guidance while preserving its
@@ -482,7 +495,7 @@ export function formatSearchOutput(value: WebSearchTinyValue): string {
     parts.push(`No results found. ${STOP_SEARCHING_NOTICE}`)
   }
   if (value.truncated) parts.push(`(Showing the first ${String(value.sources.length)} sources. Refine the query for more.)`)
-  parts.push(`Searched at ${value.searchedAt}. Build your answer strictly from the sources above and cite them as markdown links — do not add facts from your training data that the sources do not state; if they do not cover something, say you could not verify it.`)
+  parts.push(`Searched at ${value.searchedAt}. Prefer these sources for every factual claim and cite them as markdown links — do not invent facts they do not state; where they are silent, say you could not verify it.`)
   return parts.join('\n\n')
 }
 
@@ -556,10 +569,21 @@ export function apply(ctx: Context, config: Config): void {
       const searchQuestion = withCurrentDate(resolveStaleYear(generated, args.query))
       const searchedAt = new Date().toISOString()
       // A near-duplicate of a search this session just ran reuses that
-      // outcome at once: no engine hit, no rewording loop to feed.
+      // outcome at once: no engine hit, no rewording loop to feed. Past the
+      // repeat threshold the reuse escalates to the empty stop result, so a
+      // stubborn loop is forced to become an answer.
       const key = exec.agent?.session.id !== undefined ? String(exec.agent.session.id) : 'shared'
       const tokens = queryTokens(searchQuestion)
       const repeated = recentSearches.find(key, tokens)
+      if (repeated !== undefined && repeated.repeats >= REPEAT_STOP_THRESHOLD) {
+        return {
+          query: args.query,
+          searchQuestion,
+          searchedAt,
+          sources: [],
+          truncated: false,
+        }
+      }
       if (repeated !== undefined) {
         return {
           query: args.query,
@@ -573,11 +597,11 @@ export function apply(ctx: Context, config: Config): void {
       try {
         result = await ctx.web.search({ query: searchQuestion, maxResults: resolved.maxResults }, exec.signal)
       } catch (error: unknown) {
-        recentSearches.record(key, { tokens, at: Date.now(), sources: [], truncated: false })
+        recentSearches.record(key, { tokens, at: Date.now(), sources: [], truncated: false, repeats: 1 })
         throw searchFailureWithGuidance(error)
       }
       const sources = result.sources.map(projectSource)
-      recentSearches.record(key, { tokens, at: Date.now(), sources, truncated: result.truncated })
+      recentSearches.record(key, { tokens, at: Date.now(), sources, truncated: result.truncated, repeats: 1 })
       return {
         query: args.query,
         searchQuestion,

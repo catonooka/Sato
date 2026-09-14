@@ -2477,9 +2477,9 @@ export function apply(ctx: Context, config: Config): void {
     promptCtx.systemPrompt.section({
       name: 'app:search-grounding',
       order: promptCtx.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA_SUFFIX'),
-      text: 'When you use web_search, every factual claim in your answer must come from the returned '
-        + 'sources, cited as markdown links. Never blend in remembered facts the sources do not state: '
-        + 'if the sources are thin or silent on a detail, say you could not verify it instead of guessing.',
+      text: 'When you use web_search, prefer the returned sources for every factual claim and cite them as '
+        + 'markdown links. Do not invent facts the sources do not state: where they are thin or silent, either '
+        + 'skip the detail or say you could not verify it — then answer with what you have.',
     })
   })
 

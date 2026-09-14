@@ -12,6 +12,7 @@ import {
   STOP_SEARCHING_NOTICE,
   WEB_SEARCH_DESCRIPTION,
   RecentSearches,
+  REPEAT_STOP_THRESHOLD,
   formatSearchOutput,
   generatorSystem,
   queryTokens,
@@ -132,8 +133,8 @@ describe('formatSearchOutput', () => {
     expect(text).toContain('- [Example A](https://example.com/a) — First result (published 2026-09-01)')
     expect(text).toContain('- [example.com](https://example.com/b)')
     expect(text).toContain('Searched at 2026-09-08T12:00:00.000Z.')
-    expect(text).toContain('Build your answer strictly from the sources above')
-    expect(text).toContain('do not add facts from your training data')
+    expect(text).toContain('Prefer these sources for every factual claim')
+    expect(text).toContain('do not invent facts they do not state')
   })
 
   it('reports empty results with the anti-loop guidance instead of a bare line', () => {
@@ -304,9 +305,9 @@ describe('anti-loop guidance', () => {
     expect(WEB_SEARCH_DESCRIPTION).toContain('do not reword it and search again')
   })
 
-  it('teaches source-only answering in the tool description', () => {
-    expect(WEB_SEARCH_DESCRIPTION).toContain('answer strictly from the returned sources')
-    expect(WEB_SEARCH_DESCRIPTION).toContain('never add remembered facts')
+  it('teaches source-first answering in the tool description', () => {
+    expect(WEB_SEARCH_DESCRIPTION).toContain('prefer the returned sources')
+    expect(WEB_SEARCH_DESCRIPTION).toContain('do not invent facts')
   })
 
   it('keeps the stop notice out of results that actually found sources', () => {
@@ -360,7 +361,7 @@ describe('RecentSearches', () => {
   it('finds a similar recent search and returns its recorded outcome', () => {
     const recent = new RecentSearches()
     const sources = [{ url: 'https://example.com/a', title: 'A' }]
-    recent.record('sess-1', { tokens: queryTokens('current node.js version 2026'), at: 1_000, sources, truncated: false })
+    recent.record('sess-1', { tokens: queryTokens('current node.js version 2026'), at: 1_000, sources, truncated: false, repeats: 1 })
     const hit = recent.find('sess-1', queryTokens('node.js current version 2026'), 2_000)
     expect(hit?.sources).toEqual(sources)
     // Sessions are isolated: another session's search does not answer here.
@@ -369,14 +370,14 @@ describe('RecentSearches', () => {
 
   it('expires entries after the window so a later genuine re-ask searches again', () => {
     const recent = new RecentSearches()
-    recent.record('sess-1', { tokens: queryTokens('node.js version'), at: 0, sources: [], truncated: false })
+    recent.record('sess-1', { tokens: queryTokens('node.js version'), at: 0, sources: [], truncated: false, repeats: 1 })
     expect(recent.find('sess-1', queryTokens('node.js version'), 89_999)).toBeDefined()
     expect(recent.find('sess-1', queryTokens('node.js version'), 90_001)).toBeUndefined()
   })
 
   it('remembers an empty outcome so the duplicate reuse still tells the model to stop', () => {
     const recent = new RecentSearches()
-    recent.record('sess-1', { tokens: queryTokens('nothing found for query'), at: 0, sources: [], truncated: false })
+    recent.record('sess-1', { tokens: queryTokens('nothing found for query'), at: 0, sources: [], truncated: false, repeats: 1 })
     const hit = recent.find('sess-1', queryTokens('nothing query found'), 1_000)
     expect(hit?.sources).toEqual([])
   })
@@ -384,10 +385,22 @@ describe('RecentSearches', () => {
   it('bounds the ring per session', () => {
     const recent = new RecentSearches()
     for (let index = 0; index < 10; index++) {
-      recent.record('sess-1', { tokens: new Set([`q${index}`]), at: index, sources: [], truncated: false })
+      recent.record('sess-1', { tokens: new Set([`q${index}`]), at: index, sources: [], truncated: false, repeats: 1 })
     }
     // The oldest entries fell off; the newest still answers.
     expect(recent.find('sess-1', new Set(['q0']), 10)).toBeUndefined()
     expect(recent.find('sess-1', new Set(['q9']), 10)).toBeDefined()
+  })
+
+  it('counts repeats so a stubborn loop escalates to the stop result', () => {
+    const recent = new RecentSearches()
+    recent.record('sess-1', { tokens: queryTokens('node.js version 2026'), at: 0, sources: [], truncated: false, repeats: 1 })
+    const tokens = queryTokens('node.js version 2026')
+    // Second occurrence reuses (repeats 2), third and later cross the
+    // threshold the tool turns into the empty stop result.
+    expect(recent.find('sess-1', tokens, 1_000)?.repeats).toBe(2)
+    expect(recent.find('sess-1', tokens, 1_100)?.repeats).toBe(3)
+    expect(recent.find('sess-1', tokens, 1_200)?.repeats).toBe(4)
+    expect(REPEAT_STOP_THRESHOLD).toBe(3)
   })
 })
