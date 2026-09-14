@@ -14,11 +14,13 @@ export { TinyMetasearchProvider, TINY_PROVIDER_ID, mergeResults } from './provid
 export {
   decodeEntities,
   htmlToText,
+  parseBingHtml,
   parseDuckDuckGoHtml,
+  unwrapBingHref,
   unwrapDuckDuckGoHref,
   wikipediaHitToSource,
 } from './engines.ts'
-export type { DuckDuckGoParse, WikipediaSearchHit } from './engines.ts'
+export type { BingHit, DuckDuckGoParse, WikipediaSearchHit } from './engines.ts'
 export type { TinyMetasearchOptions } from './provider.ts'
 
 /** Cordis plugin name used by loader diagnostics. */

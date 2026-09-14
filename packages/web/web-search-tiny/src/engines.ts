@@ -104,6 +104,73 @@ export function parseDuckDuckGoHtml(html: string): DuckDuckGoParse {
   return { links, snippets }
 }
 
+/**
+ * Unwrap a Bing redirect href to the real target URL. Bing result anchors
+ * point at `https://www.bing.com/ck/a?...&u=a1<base64url target>`; the `u`
+ * parameter carries a base64url-encoded destination behind an `a1` marker.
+ * Non-redirect hrefs pass through untouched; Bing/Microsoft hosts and
+ * non-http(s) schemes are rejected (undefined) so callers drop the result.
+ * @param href - the raw href attribute value from a result anchor.
+ * @returns the absolute target URL, or undefined when unusable.
+ */
+export function unwrapBingHref(href: string): string | undefined {
+  let url: URL
+  try {
+    url = new URL(decodeEntities(href), 'https://www.bing.com')
+  } catch {
+    return undefined
+  }
+  if (url.hostname.replace(/^www\./u, '') === 'bing.com' && url.pathname === '/ck/a') {
+    const wrapped = url.searchParams.get('u') ?? ''
+    if (!wrapped.startsWith('a1')) return undefined
+    const b64 = wrapped.slice(2).replace(/-/gu, '+').replace(/_/gu, '/')
+    let decoded: string
+    try {
+      decoded = atob(b64 + '='.repeat((4 - (b64.length % 4)) % 4))
+    } catch {
+      return undefined
+    }
+    if (!/^https?:/u.test(decoded)) return undefined
+    return decoded
+  }
+  if (url.protocol !== 'https:' && url.protocol !== 'http:') return undefined
+  const host = url.hostname.replace(/^www\./u, '')
+  if (host === 'bing.com' || host.endsWith('.bing.com') || host === 'microsoft.com' || host.endsWith('.microsoft.com')) return undefined
+  return url.toString()
+}
+
+/** One parsed Bing result: target, title, and snippet text when present. */
+export interface BingHit {
+  readonly url: string
+  readonly title: string
+  readonly snippet?: string
+}
+
+/**
+ * Parse Bing's results markup: each organic row is an `<li class="b_algo">`
+ * holding an `<h2><a href>` title anchor and a caption paragraph. Redirect
+ * hrefs (`/ck/a`) unwrap to their targets; rows without a usable target or
+ * title are dropped.
+ * @param html - the raw response body from `https://www.bing.com/search`.
+ * @returns the ordered hits found.
+ */
+export function parseBingHtml(html: string): BingHit[] {
+  const hits: BingHit[] = []
+  for (const row of html.matchAll(/<li\b[^>]*class="[^"]*\bb_algo\b[^"]*"[^>]*>([\s\S]*?)(?=<li\b|<\/li>|<\/ol>|<\/ul>|$)/gu)) {
+    const anchor = /<h2\b[^>]*>\s*<a\b[^>]*\shref="([^"]+)"[^>]*>([\s\S]*?)<\/a>/u.exec(row[1] ?? '')
+    if (anchor === null) continue
+    const url = unwrapBingHref(anchor[1] ?? '')
+    if (url === undefined) continue
+    const title = htmlToText(anchor[2] ?? '')
+    if (title === '') continue
+    const snippetMatch = /<p\b[^>]*class="[^"]*b_lineclamp[23][^"]*"[^>]*>([\s\S]*?)<\/p>/u.exec(row[1] ?? '')
+      ?? /<div\b[^>]*class="b_caption"[^>]*>[\s\S]*?<p\b[^>]*>([\s\S]*?)<\/p>/u.exec(row[1] ?? '')
+    const snippet = snippetMatch === null ? undefined : htmlToText(snippetMatch[1] ?? '')
+    hits.push({ url, title, ...snippet !== undefined && snippet !== '' ? { snippet } : {} })
+  }
+  return hits
+}
+
 /** Shape of `action=query&list=search` results as returned by the Wikipedia API. */
 export interface WikipediaSearchHit {
   readonly title?: unknown

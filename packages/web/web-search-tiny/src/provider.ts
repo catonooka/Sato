@@ -1,17 +1,20 @@
 /**
  * The tiny metasearch provider: a keyless SearXNG-style aggregator behind the
- * `ctx.web` search seam. One DuckDuckGo HTML query fans out beside one
- * Wikipedia API query; results merge, deduplicate by URL, and cap at
- * `maxResults`. No API key, no per-search model call, and graceful
- * degradation when one engine fails.
+ * `ctx.web` search seam. One Bing results-page query fans out beside one
+ * DuckDuckGo HTML query and one Wikipedia API query; results merge,
+ * deduplicate by URL, and cap at `maxResults`. No API key, no per-search
+ * model call, and graceful degradation when engines fail.
  * @module @deepseek-ai/dsh-web-search-tiny/provider
  */
 
 import { WebError, type WebSearchProvider, type WebSearchRequest, type WebSearchResult, type WebSearchSource } from '@deepseek-ai/dsh-web'
-import { parseDuckDuckGoHtml, wikipediaHitToSource, type WikipediaSearchHit } from './engines.ts'
+import { parseBingHtml, parseDuckDuckGoHtml, wikipediaHitToSource, type WikipediaSearchHit } from './engines.ts'
 
 /** Stable provider id, registered with `ctx.web.registerSearchProvider`. */
 export const TINY_PROVIDER_ID = 'tiny-metasearch'
+
+/** Bing's keyless HTML results endpoint. */
+const BING_URL = 'https://www.bing.com/search'
 
 /** DuckDuckGo's keyless HTML results endpoint. */
 const DUCK_DUCK_GO_URL = 'https://html.duckduckgo.com/html/'
@@ -32,6 +35,21 @@ export interface TinyMetasearchOptions {
   timeoutMs: number
   /** Query the Wikipedia engine alongside DuckDuckGo. */
   wikipedia: boolean
+}
+
+/** Query Bing's results page and parse its organic rows. */
+async function searchBing(query: string, signal: AbortSignal, timeoutMs: number): Promise<WebSearchSource[]> {
+  const url = new URL(BING_URL)
+  url.searchParams.set('q', query)
+  url.searchParams.set('count', String(PER_ENGINE_LIMIT + 4))
+  const response = await fetch(url, {
+    headers: { 'user-agent': BROWSER_USER_AGENT, accept: 'text/html' },
+    signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
+  })
+  if (!response.ok) {
+    throw new WebError(`bing results page returned ${String(response.status)}`, 'WEB_PROVIDER_ERROR')
+  }
+  return parseBingHtml(await response.text())
 }
 
 /** Query DuckDuckGo's HTML endpoint and parse its result blocks. */
@@ -155,6 +173,12 @@ export class TinyMetasearchProvider implements WebSearchProvider {
     }
     const cancelled = signal ?? new AbortController().signal
     const engines: { name: string; run: () => Promise<WebSearchSource[]> }[] = []
+    // Bing leads: it still ships parseable HTML to plain fetches, while the
+    // other engines increasingly answer with a JS-only shell or a bot
+    // challenge that parses as zero results.
+    if (this.enginePlaying('bing')) {
+      engines.push({ name: 'bing', run: () => searchBing(request.query, cancelled, this.options.timeoutMs) })
+    }
     if (this.enginePlaying('duckduckgo')) {
       engines.push({ name: 'duckduckgo', run: () => searchDuckDuckGo(request.query, cancelled, this.options.timeoutMs) })
     }

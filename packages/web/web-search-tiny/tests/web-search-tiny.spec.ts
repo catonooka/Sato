@@ -1,6 +1,6 @@
 /**
- * Unit coverage for the tiny metasearch: DuckDuckGo HTML parsing, redirect
- * unwrapping, entity decoding, Wikipedia mapping, and merge/dedup.
+ * Unit coverage for the tiny metasearch: Bing and DuckDuckGo HTML parsing,
+ * redirect unwrapping, entity decoding, Wikipedia mapping, and merge/dedup.
  */
 
 import { describe, expect, it, vi } from 'vitest'
@@ -9,7 +9,9 @@ import {
   decodeEntities,
   htmlToText,
   mergeResults,
+  parseBingHtml,
   parseDuckDuckGoHtml,
+  unwrapBingHref,
   unwrapDuckDuckGoHref,
   wikipediaHitToSource,
 } from '../src/index.ts'
@@ -73,6 +75,53 @@ describe('unwrapDuckDuckGoHref', () => {
     expect(unwrapDuckDuckGoHref('https://duckduckgo.com/settings')).toBeUndefined()
     expect(unwrapDuckDuckGoHref('javascript:alert(1)')).toBeUndefined()
     expect(unwrapDuckDuckGoHref('//duckduckgo.com/l/?rut=no-target')).toBeUndefined()
+  })
+})
+
+describe('parseBingHtml', () => {
+  it('extracts rows in order, unwraps ck/a redirects, pairs captions', () => {
+    const parsed = parseBingHtml(`
+      <ol id="b_results">
+        <li class="b_algo" data-id iid="SERP.1"><h2 class=""><a target="_blank" href="https://www.bing.com/ck/a?!&amp;&amp;p=abc&amp;u=a1aHR0cHM6Ly9ub2RlanMub3JnL2VuL2Rvd25sb2Fk&amp;ntb=1" h="ID=SERP,1.1">Download Node&#174;</a></h2><div class="b_caption"><p class="b_lineclamp2">Node.js&#174; is a free runtime</p></div></li>
+        <li class="b_algo"><h2><a href="https://example.org/direct">Second &amp; direct</a></h2><div class="b_caption"><p class="b_lineclamp3">Second snippet</p></div></li>
+      </ol>
+    `)
+    expect(parsed).toEqual([
+      { url: 'https://nodejs.org/en/download', title: 'Download Node®', snippet: 'Node.js® is a free runtime' },
+      { url: 'https://example.org/direct', title: 'Second & direct', snippet: 'Second snippet' },
+    ])
+  })
+
+  it('drops rows without a usable target or title and non-organic blocks', () => {
+    const parsed = parseBingHtml(`
+      <li class="b_algo"><h2><a href="https://www.bing.com/ck/a?&amp;u=a1not-valid-base64!!">broken redirect</a></h2></li>
+      <li class="b_algo"><h2><a href="https://www.bing.com/videos?q=x">internal bing link</a></h2></li>
+      <li class="b_algo"><h2><a href="https://example.com/empty-title"></a></h2></li>
+      <li class="b_ans b_algoX"><h2><a href="https://example.com/wrong-row">not an organic row</a></h2></li>
+    `)
+    expect(parsed).toEqual([])
+  })
+
+  it('survives a JS-only shell page with zero result rows', () => {
+    expect(parseBingHtml('<html><body><div id="b_results"></div><script>render()</script></body></html>')).toEqual([])
+  })
+})
+
+describe('unwrapBingHref', () => {
+  it('unwraps an a1 base64url redirect to its target', () => {
+    expect(unwrapBingHref('https://www.bing.com/ck/a?!&&p=x&u=a1aHR0cHM6Ly9ub2RlanMub3JnL2VuL2Rvd25sb2Fk&ntb=1'))
+      .toBe('https://nodejs.org/en/download')
+  })
+
+  it('passes plain http(s) hrefs through and rejects bing/microsoft hosts', () => {
+    expect(unwrapBingHref('https://example.com/page?x=1')).toBe('https://example.com/page?x=1')
+    expect(unwrapBingHref('https://learn.microsoft.com/page')).toBeUndefined()
+    expect(unwrapBingHref('https://www.bing.com/search?q=x')).toBeUndefined()
+  })
+
+  it('rejects non-http schemes and ck/a payloads without the a1 marker', () => {
+    expect(unwrapBingHref('javascript:alert(1)')).toBeUndefined()
+    expect(unwrapBingHref('https://www.bing.com/ck/a?&u=a2something')).toBeUndefined()
   })
 })
 
@@ -271,10 +320,16 @@ describe('TinyMetasearchProvider result cache', () => {
 
 describe('TinyMetasearchProvider degradation', () => {
   /** Stub fetch with per-engine behaviors; record every engine call. */
-  function stubEngines(fetched: string[], duckduckgo: () => Response, wikipedia: () => Response): void {
+  function stubEngines(
+    fetched: string[],
+    duckduckgo: () => Response,
+    wikipedia: () => Response,
+    bing: () => Response = () => new Response('', { status: 200 }),
+  ): void {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = String(input)
       fetched.push(url)
+      if (url.includes('bing.com')) return bing()
       return url.includes('duckduckgo') ? duckduckgo() : wikipedia()
     }) as typeof fetch
   }
@@ -291,9 +346,45 @@ describe('TinyMetasearchProvider degradation', () => {
     }
   })
 
+  it('serves Bing results beside a bot-challenged DuckDuckGo page', async () => {
+    const fetched: string[] = []
+    const originalFetch = globalThis.fetch
+    const bingSerp = '<li class="b_algo"><h2><a href="https://example.com/bing-hit">Bing hit</a></h2>'
+      + '<div class="b_caption"><p class="b_lineclamp2">bing snippet</p></div></li>'
+    // DDG answers 202 with a challenge page: ok-shaped, parses to zero hits.
+    stubEngines(fetched, () => new Response('<html>anomaly</html>', { status: 202 }), () => new Response(JSON.stringify({ query: { search: [] } }), { status: 200 }), () => new Response(bingSerp, { status: 200 }))
+    try {
+      const provider = new TinyMetasearchProvider({ timeoutMs: 1000, wikipedia: true })
+      const result = await provider.search({ query: 'node current version', maxResults: 5 })
+      expect(result.sources).toEqual([{ url: 'https://example.com/bing-hit', title: 'Bing hit', snippet: 'bing snippet' }])
+      expect(fetched.some(url => url.includes('bing.com/search'))).toBe(true)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  it('keeps serving from DuckDuckGo while a failed Bing sits out its backoff', async () => {
+    const fetched: string[] = []
+    const originalFetch = globalThis.fetch
+    stubEngines(fetched, () => new Response(serp('ddg-hit'), { status: 200 }), () => new Response(JSON.stringify({ query: { search: [] } }), { status: 200 }), () => new Response('no', { status: 403 }))
+    try {
+      const provider = new TinyMetasearchProvider({ timeoutMs: 1000, wikipedia: false })
+      const first = await provider.search({ query: 'first', maxResults: 5 })
+      expect(first.sources.map(source => source.title)).toEqual(['ddg-hit'])
+      const bingCalls = () => fetched.filter(url => url.includes('bing.com'))
+      expect(bingCalls()).toHaveLength(1)
+      // The next search skips Bing entirely: it is inside its failure backoff.
+      await provider.search({ query: 'second', maxResults: 5 })
+      expect(bingCalls()).toHaveLength(1)
+      expect(fetched.filter(url => url.includes('duckduckgo'))).toHaveLength(2)
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
   it('fails only when every engine failed', async () => {
     const originalFetch = globalThis.fetch
-    stubEngines([], () => new Response('no', { status: 403 }), () => new Response('no', { status: 503 }))
+    stubEngines([], () => new Response('no', { status: 403 }), () => new Response('no', { status: 503 }), () => new Response('no', { status: 503 }))
     try {
       const provider = new TinyMetasearchProvider({ timeoutMs: 1000, wikipedia: true })
       await expect(provider.search({ query: 'anything', maxResults: 5 })).rejects.toThrow(/produced no results/)
