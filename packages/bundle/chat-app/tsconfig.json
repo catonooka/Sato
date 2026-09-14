@@ -46,6 +46,9 @@
       "path": "../../web/web-search-chrome"
     },
     {
+      "path": "../../web/tool-web-search-tiny"
+    },
+    {
       "path": "../../web/tool-browser-chrome"
     },
     {

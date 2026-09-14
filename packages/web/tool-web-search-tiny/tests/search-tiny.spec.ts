@@ -15,7 +15,6 @@ import {
   REPEAT_STOP_THRESHOLD,
   SEARCH_BUDGET_MAX,
   SEARCH_BUDGET_NOTICE,
-  SEARCH_BUDGET_NOTICE_KIND,
   SEARCH_BUDGET_WINDOW_MS,
   SearchBudget,
   formatSearchOutput,
@@ -369,7 +368,7 @@ describe('SearchBudget', () => {
       expect(budget.spend('sess-1', index)).toBe(true)
     }
     expect(budget.spend('sess-1', SEARCH_BUDGET_MAX)).toBe(false)
-    expect(SEARCH_BUDGET_MAX).toBe(6)
+    expect(SEARCH_BUDGET_MAX).toBe(4)
   })
 
   it('isolates sessions and resets once the window rolls over', () => {
@@ -384,6 +383,20 @@ describe('SearchBudget', () => {
     expect(SEARCH_BUDGET_WINDOW_MS).toBe(90_000)
   })
 
+  it('counts every attempt — engine-backed, refused, and re-read — per window', () => {
+    const budget = new SearchBudget(2, 1_000)
+    expect(budget.attempt('sess-1', 0)).toBe(1)
+    expect(budget.spend('sess-1', 100)).toBe(true)
+    expect(budget.attempt('sess-1', 200)).toBe(2)
+    // A read-only probe reports the same count without recording.
+    expect(budget.attempts('sess-1', 300)).toBe(2)
+    expect(budget.attempt('sess-1', 400)).toBe(3)
+    // Sessions stay isolated.
+    expect(budget.attempts('sess-2', 400)).toBe(0)
+    // The window rolls: the oldest attempt expired.
+    expect(budget.attempts('sess-1', 1_001)).toBe(2)
+  })
+
   it('drops only the expired marks, keeping later ones counted', () => {
     const budget = new SearchBudget(2, 1_000)
     expect(budget.spend('sess-1', 500)).toBe(true)
@@ -395,19 +408,10 @@ describe('SearchBudget', () => {
   })
 })
 
-describe('formatSearchOutput — search budget notice', () => {
-  it('answers a budgeted-out search with the answer-now instruction, not "no results"', () => {
-    const text = formatSearchOutput(value({ sources: [], notice: SEARCH_BUDGET_NOTICE_KIND }))
-    expect(text).toContain(SEARCH_BUDGET_NOTICE)
-    expect(text).toContain('write your final answer now')
-    expect(text).not.toContain('No results found.')
-  })
-
-  it('keeps the plain no-results guidance for searches without the notice marker', () => {
-    const text = formatSearchOutput(value({ sources: [] }))
-    expect(text).toContain('No results found.')
-    expect(text).toContain(STOP_SEARCHING_NOTICE)
-    expect(text).not.toContain(SEARCH_BUDGET_NOTICE)
+describe('search budget notice', () => {
+  it('carries the answer-now instruction with the live budget number', () => {
+    expect(SEARCH_BUDGET_NOTICE).toContain('write your final answer now')
+    expect(SEARCH_BUDGET_NOTICE).toContain(String(SEARCH_BUDGET_MAX))
   })
 })
 

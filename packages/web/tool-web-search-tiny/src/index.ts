@@ -320,27 +320,28 @@ export const REPEAT_STOP_THRESHOLD = 3
 /** Rolling window the per-session search budget counts engine hits over. */
 export const SEARCH_BUDGET_WINDOW_MS = 90_000
 
-/** How many engine-touching searches one session may run per window. Six
- * covers every legitimate turn (a focused lookup is 1–2, broad research 4–6)
- * while a distinct-query verification spiral — one new search per candidate
- * fact — runs past it and is stopped before the turn's step budget dies. */
-export const SEARCH_BUDGET_MAX = 6
+/** How many engine-touching searches one session may run per window. Four
+ * covers a focused lookup (1–2) and a multi-facet research turn (3–4); the
+ * tool's own guidance says two or three queries are enough for most
+ * questions. */
+export const SEARCH_BUDGET_MAX = 4
 
-/** Value `notice` marker for a search the budget refused to run. */
-export const SEARCH_BUDGET_NOTICE_KIND = 'search-budget-used'
-
-/** What a budgeted-out search answers: the loop must become an answer now. */
-export const SEARCH_BUDGET_NOTICE = `Search budget used: this conversation already ran ${String(SEARCH_BUDGET_MAX)} searches in the last 90 seconds. Do not search again — write your final answer now from the sources and pages already gathered; where they are silent, say you could not verify it online.`
+/** What a budgeted-out search fails with: the loop must become an answer. */
+export const SEARCH_BUDGET_NOTICE = `web_search budget used: this conversation already ran ${String(SEARCH_BUDGET_MAX)} searches in the last 90 seconds. Do not search again — write your final answer now from the sources and pages already gathered; where they are silent, say you could not verify it online.`
 
 /**
- * Rolling per-session counter of engine-touching searches. The duplicate
- * guard only catches near-identical rewordings, so a model can still spiral
- * through many *distinct* verification queries without ever answering; past
- * {@link SEARCH_BUDGET_MAX} fresh searches inside the window the next one is
- * refused and the caller must answer from what it already has.
+ * Rolling per-session counter of search attempts. The duplicate guard only
+ * catches near-identical rewordings, so a model can still spiral through
+ * many *distinct* verification queries without ever answering. Every
+ * `web_search` call — engine-backed, budget-refused, or duplicate-reused —
+ * counts as one attempt in the window; past {@link SEARCH_BUDGET_MAX} fresh
+ * engine searches the next one is refused, and the attempt count lets a host
+ * hide the tool outright once the model keeps calling anyway (see the
+ * chat-app's assembly gate).
  */
 export class SearchBudget {
   private readonly marks = new Map<string, number[]>()
+  private readonly tries = new Map<string, number[]>()
 
   constructor(
     private readonly max: number = SEARCH_BUDGET_MAX,
@@ -354,7 +355,7 @@ export class SearchBudget {
    * @returns whether the search may touch the engines.
    */
   spend(key: string, now = Date.now()): boolean {
-    const live = (this.marks.get(key) ?? []).filter(at => now - at < this.windowMs)
+    const live = this.liveMarks(this.marks, key, now)
     if (live.length >= this.max) {
       this.marks.set(key, live)
       return false
@@ -362,6 +363,37 @@ export class SearchBudget {
     live.push(now)
     this.marks.set(key, live)
     return true
+  }
+
+  /**
+   * Record one search attempt (any kind) and return the window's count.
+   * @param key - the per-session budget key.
+   * @param now - the reference time (injectable for deterministic tests).
+   * @returns attempts inside the window, this one included.
+   */
+  attempt(key: string, now = Date.now()): number {
+    const live = this.liveMarks(this.tries, key, now)
+    live.push(now)
+    this.tries.set(key, live)
+    return live.length
+  }
+
+  /**
+   * Read the window's attempt count without recording (assembly-time probe).
+   * @param key - the per-session budget key.
+   * @param now - the reference time (injectable for deterministic tests).
+   * @returns attempts inside the window.
+   */
+  attempts(key: string, now = Date.now()): number {
+    return this.liveMarks(this.tries, key, now).length
+  }
+
+  /** Live (unexpired) marks of one map entry; an emptied entry is dropped. */
+  private liveMarks(store: Map<string, number[]>, key: string, now: number): number[] {
+    const live = (store.get(key) ?? []).filter(at => now - at < this.windowMs)
+    if (live.length === 0) store.delete(key)
+    else store.set(key, live)
+    return live
   }
 }
 
@@ -384,6 +416,17 @@ const recentSearches = new RecentSearches()
 
 /** Per-session rolling search budget, feeding the answer-now guard in execute. */
 const searchBudget = new SearchBudget()
+
+/**
+ * Read one session's current search-attempt count (engine, refused, and
+ * duplicate-reused calls alike) inside the rolling window — the probe a host
+ * uses to hide the tool from a model that keeps calling past its budget.
+ * @param key - the per-session budget key.
+ * @returns attempts inside the window.
+ */
+export function searchAttempts(key: string): number {
+  return searchBudget.attempts(key)
+}
 
 /** Plugin config: result bound, generator toggle and model, and the timeout budget. */
 export interface Config {
@@ -424,15 +467,13 @@ export interface WebSearchTinySource {
 }
 
 /** Canonical `web_search` output value: the raw query, the generated search
- * question, the search time, the sources, the truncation flag, and an
- * optional notice marker (today: a search the budget refused to run). */
+ * question, the search time, the sources, and the truncation flag. */
 export interface WebSearchTinyValue {
   query: string
   searchQuestion: string
   searchedAt: string
   sources: WebSearchTinySource[]
   truncated: boolean
-  notice?: string
 }
 
 /** Project one seam source into a plain object that omits every absent optional field. */
@@ -545,8 +586,6 @@ export function formatSearchOutput(value: WebSearchTinyValue): string {
       return `- [${label}](${source.url})${suffix}`
     })
     parts.push(`Sources:\n${lines.join('\n')}`)
-  } else if (value.notice === SEARCH_BUDGET_NOTICE_KIND) {
-    parts.push(SEARCH_BUDGET_NOTICE)
   } else {
     parts.push(`No results found. ${STOP_SEARCHING_NOTICE}`)
   }
@@ -595,7 +634,6 @@ export function apply(ctx: Context, config: Config): void {
             },
           },
           truncated: { type: 'boolean', required: true },
-          notice: { type: 'string' },
         },
       },
       render: (_args: WebSearchTinyArgs, value: WebSearchTinyValue): ContentBlock[] => [
@@ -630,6 +668,10 @@ export function apply(ctx: Context, config: Config): void {
       // repeat threshold the reuse escalates to the empty stop result, so a
       // stubborn loop is forced to become an answer.
       const key = exec.agent?.session.id !== undefined ? String(exec.agent.session.id) : 'shared'
+      // Every call counts as one attempt — engine-backed, refused, or a
+      // duplicate reuse — so a host gating the tool away sees the true call
+      // count, not just the engine hits.
+      searchBudget.attempt(key)
       const tokens = queryTokens(searchQuestion)
       const repeated = recentSearches.find(key, tokens)
       if (repeated !== undefined && repeated.repeats >= REPEAT_STOP_THRESHOLD) {
@@ -652,17 +694,10 @@ export function apply(ctx: Context, config: Config): void {
       }
       // The duplicate guard above only sees near-identical rewordings; a
       // spiral of distinct verification queries still burns the turn's steps
-      // without answering. Past the rolling budget the next fresh search is
-      // refused outright and the notice turns the loop into an answer.
+      // without answering. Past the rolling budget the next fresh search
+      // fails loudly and the notice turns the loop into an answer.
       if (!searchBudget.spend(key)) {
-        return {
-          query: args.query,
-          searchQuestion,
-          searchedAt,
-          sources: [],
-          truncated: false,
-          notice: SEARCH_BUDGET_NOTICE_KIND,
-        }
+        throw new Error(SEARCH_BUDGET_NOTICE)
       }
       let result: Awaited<ReturnType<typeof ctx.web.search>>
       try {

@@ -47,6 +47,7 @@ import {
   bridgeClientOf,
   CHROME_NOT_CONNECTED,
   createUserChromeSearch,
+  stripSearchWhenSpent,
   wantsForcedSearch,
   settingsJson,
   isExtensionBridgePath,
@@ -275,6 +276,28 @@ describe('isExtensionBridgePath', () => {
     expect(isExtensionBridgePath('GET', ['sessions'])).toBe(false)
     expect(isExtensionBridgePath('GET', ['chrome'])).toBe(false)
     expect(isExtensionBridgePath('GET', ['chrome', 'next', 'extra'])).toBe(false)
+  })
+})
+
+describe('stripSearchWhenSpent', () => {
+  const tools = [
+    { name: 'web_search' },
+    { name: 'web_fetch' },
+  ]
+
+  it('keeps the exact array while attempts stay under the threshold', () => {
+    expect(stripSearchWhenSpent(tools, 0, 5)).toBe(tools)
+    expect(stripSearchWhenSpent(tools, 4, 5)).toBe(tools)
+  })
+
+  it('hides only web_search once attempts reach the threshold', () => {
+    expect(stripSearchWhenSpent(tools, 5, 5)).toEqual([{ name: 'web_fetch' }])
+    expect(stripSearchWhenSpent(tools, 9, 5)).toEqual([{ name: 'web_fetch' }])
+  })
+
+  it('keeps the array when there is nothing to strip', () => {
+    const withoutSearch = [{ name: 'web_fetch' }]
+    expect(stripSearchWhenSpent(withoutSearch, 99, 5)).toBe(withoutSearch)
   })
 })
 

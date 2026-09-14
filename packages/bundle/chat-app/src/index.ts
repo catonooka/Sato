@@ -50,6 +50,7 @@ import {
   type SessionUserMeta,
 } from './users-store.ts'
 import { routeSearchTarget, toSources } from '@deepseek-ai/dsh-web-search-chrome/src/provider.ts'
+import { SEARCH_BUDGET_MAX, searchAttempts } from '@deepseek-ai/dsh-tool-web-search-tiny'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
@@ -272,6 +273,23 @@ export function wantsForcedSearch(text: string): boolean {
 
 /** Sessions whose next first model step must force a `web_search` call. */
 const pendingForcedSearch = new Set<string>()
+
+/**
+ * Drop `web_search` from an assembled tool list once the session's search
+ * attempts cross the threshold: a model that keeps calling a refused search
+ * still burns steps and paints a chip per call, so past the threshold the
+ * tool disappears from its schema entirely and the turn must become an
+ * answer. The input reference survives unchanged when nothing is stripped,
+ * so callers can keep sharing the assembly as-is.
+ * @param tools - the assembled tool definitions for one request.
+ * @param attempts - the session's search attempts inside the budget window.
+ * @param threshold - attempt count at which the tool is hidden.
+ * @returns the same array when untouched, else the filtered copy.
+ */
+export function stripSearchWhenSpent<T extends { name: string }>(tools: T[], attempts: number, threshold: number): T[] {
+  if (attempts < threshold || !tools.some(tool => tool.name === 'web_search')) return tools
+  return tools.filter(tool => tool.name !== 'web_search')
+}
 
 /**
  * Name the provider a failed turn actually ran against: the character's own
@@ -2415,6 +2433,20 @@ export function apply(ctx: Context, config: Config): void {
       ...temperature !== undefined ? { temperature } : {},
       ...forceSearch ? { toolChoice: { name: 'web_search' } } : {},
     }
+  })
+
+  // A model that keeps calling a budget-refused web_search still spends one
+  // step (and one result chip) per call. Once a session's attempts pass the
+  // budget by one, the tool vanishes from the assembled schema: the model
+  // cannot call what it cannot see, and the turn turns into an answer.
+  const searchStripThreshold = SEARCH_BUDGET_MAX + 1
+  ctx.on('system-prompt/assemble', async (_assembly, context, next) => {
+    const resolved = await next()
+    const agent = (context as { agent?: { session?: { id?: unknown } } }).agent
+    const sessionId = agent?.session?.id !== undefined ? String(agent.session.id) : ''
+    if (sessionId === '') return resolved
+    const stripped = stripSearchWhenSpent(resolved.tools, searchAttempts(sessionId), searchStripThreshold)
+    return stripped === resolved.tools ? resolved : { ...resolved, tools: stripped }
   })
 
   // Auto-compaction triggers, gated on the settings toggle (on unless the
