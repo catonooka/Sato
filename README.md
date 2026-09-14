@@ -23,10 +23,15 @@ Ollama/vLLM.
   the whole app.
 - **Tiny model context** — one persona line plus the tool schemas on the wire;
   nothing else mounts.
-- **Search your way** — the keyless built-in metasearch, or *Your Chrome*:
-  a tiny [companion extension](packages/web/web-search-chrome/extension/README.md)
-  runs searches inside your logged-in browser (no debug port, no tab), with a
-  CDP fallback; `x:`-prefixed queries search your own X account.
+- **Search your way** — the keyless built-in metasearch (Bing, DuckDuckGo,
+  and Wikipedia fan out and merge; engines sit out a short backoff when they
+  fail), or *Your Chrome*: a tiny
+  [companion extension](packages/web/web-search-chrome/extension/README.md)
+  runs searches inside your logged-in browser — no debug port, no tab, ever;
+  a missing heartbeat fails fast with instructions instead of degrading into
+  anything that opens Chrome. One engine serving a JavaScript-only shell or a
+  bot-challenge page falls through to the next (Google → Bing → DuckDuckGo),
+  and `x:`-prefixed queries search your own X account.
 - **A browser tool that is you** — the `browser` tool drives a real tab in
   your own Chrome, with your logins: your X timeline, GitHub, mail — pages
   no search engine can see. Reading always works (open / snapshot / extract
@@ -34,11 +39,27 @@ Ollama/vLLM.
   profiles where you turned actions on — off by default, per profile. All
   observations are hard-capped, and multi-profile routing keeps the model
   in the right Chrome identity.
+- **Grounded answers, bounded research** — an ask to *find* something forces
+  a `web_search` on the turn's first model step (no answering from stale
+  memory), `web_fetch` reads promising pages whole, and the grounding prompt
+  makes the model cite what it gathered or say it could not verify — never
+  invent. The loop is bounded the same way: a rolling budget of 4 searches
+  and 8 page fetches per chat per 90 seconds, near-duplicate queries reused
+  instead of re-run, the search tool hidden entirely from a model that keeps
+  calling past its budget, and a step cap whose last step is a forced
+  tool-less answer — so a turn ends with an answer, not a tool spiral.
+- **vLLM/qwen-friendly endpoints** — non-DeepSeek base URLs also send
+  `chat_template_kwargs: {enable_thinking: true}`: qwen-style chat templates
+  otherwise default thinking off and silently drop it, which turns a
+  thinking-model answer into an empty response.
 - **Multimodal input** — the probe gates a clip button; attach images and
   videos (≤ 8MB / 64MB). Uploads stream as raw bytes straight into durable
   storage and the message carries only a reference; the composer previews
   from a local blob URL, so no base64 copy ever sits in page memory.
 - **Clean UI** — collapsible sidebar (with a new-chat rail when collapsed),
+  consecutive search/fetch steps folded into one collapsed *Research* chip
+  (expand to the indented steps, each with its own sources toggle; the live
+  step's label shows while it runs), distinct *Searched* and *Fetched* chips,
   chat-style replies that quote the answered message, per-message
   copy/reply/try-again actions, full-text chat search, lazy-loaded
   history, streaming that re-renders only the growing row, light/dark theme.
@@ -99,7 +120,7 @@ The full environment-variable table and the access model are in
 ## Develop
 
 ```sh
-pnpm vitest run packages/bundle/chat-app packages/web packages/llm/llm-deepseek apps/chat   # the fork's suites
+pnpm vitest run packages/bundle/chat-app packages/web packages/core/agent-loop packages/llm/llm-deepseek apps/chat   # the fork's suites
 pnpm run build:chat-web        # rebuild the frontend after UI edits
 pnpm run build:lib:host        # rebuild server libs after bundle edits
 ```
@@ -111,7 +132,8 @@ pnpm run build:lib:host        # rebuild server libs after bundle edits
 | `packages/bundle/chat-app/` | the chat profile bundle: API routes, SSE, settings, characters, engines |
 | `apps/chat/` | the web frontend (React, no runtime deps beyond it) |
 | `packages/web/web-search-chrome/` | the user-Chrome search provider + companion extension |
-| `packages/web/web-search-tiny/`, `packages/web/tool-web-search-tiny/` | the built-in search engines and tool |
+| `packages/web/web-search-tiny/`, `packages/web/tool-web-search-tiny/` | the built-in search engines, budgets, and `web_search` tool |
+| `packages/web/tool-web/`, `packages/web/web-fetch-http/` | the `web_fetch` page-reading tool and its HTTP provider |
 | `docs/chat-app.md` | the chat surface's own documentation |
 
 Everything else is upstream harness, mounted but untouched — see
