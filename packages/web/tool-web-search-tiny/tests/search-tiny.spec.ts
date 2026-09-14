@@ -125,14 +125,15 @@ describe('sanitizeGeneratedQuestion', () => {
 })
 
 describe('formatSearchOutput', () => {
-  it('renders notice, question, timestamped sources, and citation instruction', () => {
+  it('renders notice, question, timestamped sources, and the grounding instruction', () => {
     const text = formatSearchOutput(value())
     expect(text.startsWith(EXTERNAL_WEB_CONTENT_NOTICE)).toBe(true)
     expect(text).toContain('Search question: DeepSeek Harness latest release version')
     expect(text).toContain('- [Example A](https://example.com/a) — First result (published 2026-09-01)')
     expect(text).toContain('- [example.com](https://example.com/b)')
     expect(text).toContain('Searched at 2026-09-08T12:00:00.000Z.')
-    expect(text).toContain('Cite the relevant URLs above as markdown links')
+    expect(text).toContain('Build your answer strictly from the sources above')
+    expect(text).toContain('do not add facts from your training data')
   })
 
   it('reports empty results with the anti-loop guidance instead of a bare line', () => {
@@ -301,6 +302,11 @@ describe('search latency budget', () => {
 describe('anti-loop guidance', () => {
   it('teaches the no-retry rule in the tool description itself', () => {
     expect(WEB_SEARCH_DESCRIPTION).toContain('do not reword it and search again')
+  })
+
+  it('teaches source-only answering in the tool description', () => {
+    expect(WEB_SEARCH_DESCRIPTION).toContain('answer strictly from the returned sources')
+    expect(WEB_SEARCH_DESCRIPTION).toContain('never add remembered facts')
   })
 
   it('keeps the stop notice out of results that actually found sources', () => {

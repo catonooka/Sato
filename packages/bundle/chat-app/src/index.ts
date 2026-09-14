@@ -2474,6 +2474,13 @@ export function apply(ctx: Context, config: Config): void {
       order: promptCtx.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA_SUFFIX'),
       text: () => `Current date: ${new Date().toISOString().slice(0, 10)} (UTC).`,
     })
+    promptCtx.systemPrompt.section({
+      name: 'app:search-grounding',
+      order: promptCtx.systemPrompt.getSectionOrder('DEPLOYMENT_PERSONA_SUFFIX'),
+      text: 'When you use web_search, every factual claim in your answer must come from the returned '
+        + 'sources, cited as markdown links. Never blend in remembered facts the sources do not state: '
+        + 'if the sources are thin or silent on a detail, say you could not verify it instead of guessing.',
+    })
   })
 
   ctx.on('agent/assistant-stream', ({ agent, frame }) => {
