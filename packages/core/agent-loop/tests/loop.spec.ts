@@ -529,6 +529,57 @@ describe('agent loop', () => {
       : undefined).toMatchObject({ code: 'MAX_STEPS' })
   })
 
+  it('closes an aborted turn even when an aborted fetch grafted a stack accessor onto the cause', async () => {
+    // A real in-flight fetch, aborted with a custom cause, grafts a lazy
+    // native `stack` accessor onto that cause object — the session log's
+    // lossless JSON rules then reject the live object. The loop must record
+    // the plain durable shape so the turn still ends and nothing hangs.
+    const adapter = new MockAdapter([
+      toolCallResponse('c1', 'slow', { text: 'x' }),
+      textResponse('done'),
+    ])
+    const ctx = await harness(adapter)
+    let toolStarted = () => { /* replaced below */ }
+    const toolStartedPromise = new Promise<boolean>((resolve) => { toolStarted = () => resolve(true) })
+    ctx.tools.register(defineContentToolFixture({
+      name: 'slow',
+      description: 'waits for an abort',
+      parameters: { text: { type: 'string' } },
+      async execute(_args, exec) {
+        toolStarted()
+        await new Promise<never>((_resolve, reject) => {
+          const enrichLikeUndici = () => {
+            const cause = exec.signal.reason as { kind: string }
+            Object.defineProperty(cause, 'stack', {
+              get() { return 'simulated caller stack' },
+              set() { /* undici keeps the accessor assignable */ },
+              enumerable: false,
+              configurable: true,
+            })
+            reject(cause)
+          }
+          exec.signal.addEventListener('abort', enrichLikeUndici, { once: true })
+        })
+        return [{ type: 'text', text: 'late' }]
+      },
+    }) as never)
+    const agent = await ctx.agentLoop.create(SessionId('a1'), { provider: 'mock', model: 'mock' })
+
+    send(agent, 'go')
+    await toolStartedPromise
+    agent.cancel({ kind: 'user' })
+    await waitForIdle(ctx, agent)
+
+    const turnEnd = agent.session.snapshotEvents().findLast(e => e.type === 'turn/end')
+    expect(turnEnd?.type === 'turn/end' && turnEnd.data.reason.kind === 'aborted'
+      ? turnEnd.data.reason.reason
+      : undefined).toEqual({ kind: 'user' })
+    // The durable copy carries no accessor: the log line round-trips clean.
+    const stored = JSON.stringify(turnEnd)
+    expect(stored).toContain('"kind":"aborted"')
+    expect(stored).not.toContain('stack')
+  })
+
   it('renders harness identity, then the persona, then tool guidance — with {{variables}} resolved', async () => {
     const adapter = new MockAdapter([textResponse('ok')])
     // The persona is a TEMPLATE: {{model}} is the loop-registered variable

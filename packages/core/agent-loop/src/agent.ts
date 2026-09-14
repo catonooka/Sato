@@ -67,6 +67,21 @@ function requestProposal(header: EpochHeader): LlmCallConfig {
   return proposal
 }
 
+/**
+ * The durable form of one cancellation cause. An in-flight `fetch` aborted
+ * with a custom cause grafts a lazy native `stack` accessor onto the cause
+ * object itself, and the session log's lossless JSON rules reject any own
+ * non-enumerable property — so the live object must never be recorded.
+ * Rebuild the plain shape instead, keeping the `kind` discriminator and the
+ * hook reason string, which is everything the log ever needs.
+ * @param cause - the live abort reason, possibly enriched by undici.
+ * @returns a fresh plain-object cause safe to append to the session log.
+ */
+export function durableCancelCause(cause: AgentCancelCause): AgentCancelCause {
+  if (cause.kind === 'hook') return { kind: 'hook', reason: cause.reason }
+  return { kind: cause.kind }
+}
+
 /** Drives one session through turn and step boundaries. */
 export class ReactLoopAgent implements Agent {
   readonly inbox: ReactLoopInbox
@@ -322,7 +337,7 @@ export class ReactLoopAgent implements Agent {
       }
     } catch (error: unknown) {
       if (signal.aborted) {
-        turnEnds = { kind: 'aborted', reason: signal.reason as AgentCancelCause }
+        turnEnds = { kind: 'aborted', reason: durableCancelCause(signal.reason as AgentCancelCause) }
         throw error
       }
       // Every failure is structured: an `LlmError` keeps its facts, anything
