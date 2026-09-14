@@ -9,13 +9,20 @@ import {
   GENERATOR_TIMEOUT_MS,
   LruCache,
   EXTERNAL_WEB_CONTENT_NOTICE,
+  STOP_SEARCHING_NOTICE,
+  WEB_SEARCH_DESCRIPTION,
+  RecentSearches,
   formatSearchOutput,
   generatorSystem,
+  queryTokens,
   resolveStaleYear,
+  searchFailureWithGuidance,
   sanitizeGeneratedQuestion,
+  similarQuery,
   withCurrentDate,
   type WebSearchTinyValue,
 } from '../src/index.ts'
+import { WebError } from '@deepseek-ai/dsh-web'
 
 const NOW = new Date('2026-09-08T03:12:04.236Z')
 
@@ -128,9 +135,10 @@ describe('formatSearchOutput', () => {
     expect(text).toContain('Cite the relevant URLs above as markdown links')
   })
 
-  it('reports empty results without a source list', () => {
+  it('reports empty results with the anti-loop guidance instead of a bare line', () => {
     const text = formatSearchOutput(value({ sources: [] }))
     expect(text).toContain('No results found.')
+    expect(text).toContain(STOP_SEARCHING_NOTICE)
     expect(text).not.toContain('Sources:')
   })
 
@@ -287,5 +295,85 @@ describe('LruCache', () => {
 describe('search latency budget', () => {
   it('keeps the generator timeout tight: it gates every search', () => {
     expect(GENERATOR_TIMEOUT_MS).toBeLessThan(5_000)
+  })
+})
+
+describe('anti-loop guidance', () => {
+  it('teaches the no-retry rule in the tool description itself', () => {
+    expect(WEB_SEARCH_DESCRIPTION).toContain('do not reword it and search again')
+  })
+
+  it('keeps the stop notice out of results that actually found sources', () => {
+    expect(formatSearchOutput(value())).not.toContain(STOP_SEARCHING_NOTICE)
+  })
+
+  it('enriches a failed search with the stop notice while preserving its code', () => {
+    const original = new WebError('tiny metasearch produced no results', 'WEB_PROVIDER_ERROR')
+    const enriched = searchFailureWithGuidance(original)
+    expect(enriched).toBeInstanceOf(WebError)
+    expect((enriched as WebError).code).toBe('WEB_PROVIDER_ERROR')
+    expect(enriched.message).toContain('tiny metasearch produced no results')
+    expect(enriched.message).toContain(STOP_SEARCHING_NOTICE)
+    expect(searchFailureWithGuidance('plain rejection').message).toContain(STOP_SEARCHING_NOTICE)
+  })
+})
+
+describe('queryTokens / similarQuery', () => {
+  it('treats reworded versions of one question as similar', () => {
+    // The exact failure shape from the wild: the model rephrasing an
+    // unsuccessful query word by word.
+    const a = queryTokens('current stable node.js version 2026')
+    const b = queryTokens('node.js current version 2026')
+    expect(similarQuery(a, b)).toBe(true)
+  })
+
+  it('keeps genuinely different intents apart', () => {
+    const a = queryTokens('current stable node.js version 2026')
+    const b = queryTokens('node.js 26 release notes announcement')
+    expect(similarQuery(a, b)).toBe(false)
+  })
+
+  it('normalizes case and punctuation before comparing', () => {
+    expect(similarQuery(queryTokens('Eiffel Tower, completed?'), queryTokens('eiffel tower completed'))).toBe(true)
+  })
+
+  it('never matches an empty query', () => {
+    expect(similarQuery(queryTokens('   '), queryTokens('anything'))).toBe(false)
+  })
+})
+
+describe('RecentSearches', () => {
+  it('finds a similar recent search and returns its recorded outcome', () => {
+    const recent = new RecentSearches()
+    const sources = [{ url: 'https://example.com/a', title: 'A' }]
+    recent.record('sess-1', { tokens: queryTokens('current node.js version 2026'), at: 1_000, sources, truncated: false })
+    const hit = recent.find('sess-1', queryTokens('node.js current version 2026'), 2_000)
+    expect(hit?.sources).toEqual(sources)
+    // Sessions are isolated: another session's search does not answer here.
+    expect(recent.find('sess-2', queryTokens('node.js current version 2026'), 2_000)).toBeUndefined()
+  })
+
+  it('expires entries after the window so a later genuine re-ask searches again', () => {
+    const recent = new RecentSearches()
+    recent.record('sess-1', { tokens: queryTokens('node.js version'), at: 0, sources: [], truncated: false })
+    expect(recent.find('sess-1', queryTokens('node.js version'), 89_999)).toBeDefined()
+    expect(recent.find('sess-1', queryTokens('node.js version'), 90_001)).toBeUndefined()
+  })
+
+  it('remembers an empty outcome so the duplicate reuse still tells the model to stop', () => {
+    const recent = new RecentSearches()
+    recent.record('sess-1', { tokens: queryTokens('nothing found for query'), at: 0, sources: [], truncated: false })
+    const hit = recent.find('sess-1', queryTokens('nothing query found'), 1_000)
+    expect(hit?.sources).toEqual([])
+  })
+
+  it('bounds the ring per session', () => {
+    const recent = new RecentSearches()
+    for (let index = 0; index < 10; index++) {
+      recent.record('sess-1', { tokens: new Set([`q${index}`]), at: index, sources: [], truncated: false })
+    }
+    // The oldest entries fell off; the newest still answers.
+    expect(recent.find('sess-1', new Set(['q0']), 10)).toBeUndefined()
+    expect(recent.find('sess-1', new Set(['q9']), 10)).toBeDefined()
   })
 })
