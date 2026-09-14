@@ -1070,6 +1070,19 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 .tool-sources a { color: var(--fg); text-decoration: underline; text-underline-offset: 2px; }
 .tool-excerpt { color: var(--fg-muted); line-height: 1.45; white-space: pre-wrap; }
 
+.tool-steps-group { display: flex; flex-direction: column; gap: 6px; max-width: 100%; }
+.tool-group-summary .chevron { width: 12px; height: 12px; flex: none; opacity: 0.75; transition: transform 140ms ease; }
+.tool-group-summary .chevron.open { transform: rotate(90deg); }
+.tool-group-summary.live .tool-icon { animation: session-live-pulse 1.6s ease-in-out infinite; }
+.tool-group-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-left: 13px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border);
+}
+
 .chrome-profiles { opacity: 0.75; }
 
 /* ── composer ─────────────────────────────────────────────────────────────── */

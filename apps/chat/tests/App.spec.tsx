@@ -718,6 +718,36 @@ describe('streaming turn', () => {
     await screen.findByText('done', {}, { timeout: 3000 })
   })
 
+  it('folds consecutive search steps into one collapsed group that expands on click', async () => {
+    localStorage.setItem('dsh-chat-active', 'sess-a')
+    await renderApp({
+      sessions: [{ id: 'sess-a', title: 'A', items: [] }],
+      streams: [delayedSseResponse([
+        { t: 'tool-start', name: 'web_search', query: 'node 25' },
+        { t: 'tool-end', name: 'web_search', query: 'node 25', searchedAt: '2026-09-08T00:00:00.000Z', sources: [{ url: 'https://nodejs.org', title: 'Node.js' }] },
+        { t: 'tool-start', name: 'web_search', query: 'node 26' },
+        { t: 'tool-end', name: 'web_search', query: 'node 26', searchedAt: '2026-09-08T00:00:01.000Z', sources: [{ url: 'https://example.com', title: 'Example' }] },
+        { t: 'assistant', text: 'both searched' },
+        { t: 'turn-end', reason: 'completed' },
+      ], 30)],
+    })
+    const composer = screen.getByPlaceholderText<HTMLTextAreaElement>('Message Sato…')
+    fireEvent.change(composer, { target: { value: 'search node twice' } })
+    fireEvent.keyDown(composer, { key: 'Enter' })
+    // Two settled searches collapse behind one summary chip; the individual
+    // step chips are hidden until it opens.
+    const summary = await screen.findByText('Research · 2 searches', {}, { timeout: 3000 })
+    expect(screen.queryByText('Searched · node 25')).toBeNull()
+    expect(screen.queryByText('Searched · node 26')).toBeNull()
+    fireEvent.click(summary)
+    expect(screen.getByText('Searched · node 25')).toBeTruthy()
+    expect(screen.getByText('Searched · node 26')).toBeTruthy()
+    // And it folds back.
+    fireEvent.click(screen.getByText('Research · 2 searches'))
+    expect(screen.queryByText('Searched · node 25')).toBeNull()
+    await screen.findByText('both searched', {}, { timeout: 3000 })
+  })
+
   it('shows the searching placeholder when a tool runs before any text lands', async () => {
     localStorage.setItem('dsh-chat-active', 'sess-a')
     await renderApp({

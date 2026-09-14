@@ -352,6 +352,62 @@ const ToolChip = memo(function ToolChip({ item }: { item: ChatItem }): JSX.Eleme
   )
 })
 
+/** One chip-shaped label for the step currently running, shared by the
+ * group's live face so a collapsed group still says what is happening. */
+function liveStepLabel(item: ChatItem): string {
+  if (item.name === 'web_fetch') {
+    const host = item.url !== undefined ? hostnameOf(item.url) : ''
+    return `Fetching${host === '' ? '' : ` · ${host}`}`
+  }
+  if (item.action !== undefined || item.name === 'browser') return 'Browsing'
+  return `Searching${item.query !== undefined && item.query !== '' ? ` · ${item.query}` : ''}`
+}
+
+/**
+ * A run of two or more tool steps collapses behind one summary chip — the
+ * steps stay reachable behind the toggle but stop stacking into a wall
+ * between the question and the answer. While the turn is live the summary
+ * shows the running step's own label, so progress stays visible collapsed.
+ */
+const ToolStepsGroup = memo(function ToolStepsGroup({ items }: { items: ChatItem[] }): JSX.Element {
+  const [open, setOpen] = useState(false)
+  const live = items.find(item => item.running === true)
+  const searches = items.filter(item => item.name === 'web_search').length
+  const fetches = items.filter(item => item.name === 'web_fetch').length
+  const other = items.length - searches - fetches
+  const summary = [
+    searches > 0 ? `${String(searches)} ${searches === 1 ? 'search' : 'searches'}` : '',
+    fetches > 0 ? `${String(fetches)} ${fetches === 1 ? 'fetch' : 'fetches'}` : '',
+    other > 0 ? `${String(other)} ${other === 1 ? 'step' : 'steps'}` : '',
+  ].filter(part => part !== '').join(' · ')
+  return (
+    <div className="tool-steps-group">
+      <button
+        type="button"
+        className={`tool-chip tool-group-summary${live !== undefined ? ' live' : ''}`}
+        aria-expanded={open}
+        onClick={() => { setOpen(value => !value) }}
+      >
+        <svg className="tool-icon" viewBox="0 0 16 16" aria-hidden="true">
+          <circle cx="6.5" cy="6.5" r="5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+          <line x1="10.5" y1="10.5" x2="14" y2="14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+        </svg>
+        <span className="tool-label">{live !== undefined ? liveStepLabel(live) : `Research · ${summary}`}</span>
+        <svg className={`chevron${open ? ' open' : ''}`} viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M6 4l4 4-4 4" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open
+        ? (
+          <div className="tool-group-steps">
+            {items.map((item, index) => <ToolChip key={index} item={item} />)}
+          </div>
+        )
+        : undefined}
+    </div>
+  )
+})
+
 /**
  * The streaming turn's row — the only component that re-renders per delta
  * batch. It subscribes to the turn's feed directly (the accumulated text
@@ -1469,30 +1525,53 @@ export default function App(): JSX.Element {
     () => items.some(item => item.role === 'tool' && item.running === true),
     [items],
   )
-  const threadRows = useMemo(() => items.map((item, index) => {
-    const trailing = index === items.length - 1
-    if (item.role === 'compaction') return <CompactionRow key={index} item={item} />
-    if (item.role === 'user') {
-      return <UserRow key={index} item={item} trailing={trailing} streaming={streaming} onReply={beginReply} onRetry={retry} />
-    }
-    if (item.role === 'tool') {
-      return (
-        <div key={index} className="row tool">
-          <ToolChip item={item} />
-        </div>
+  const threadRows = useMemo(() => {
+    // Consecutive tool steps fold into one collapsed group (2+ steps) so the
+    // thread reads as a conversation, not a tool log; a lone step keeps its
+    // plain chip.
+    const rows: JSX.Element[] = []
+    let run: ChatItem[] = []
+    let runStart = 0
+    const flushRun = (): void => {
+      if (run.length === 0) return
+      const first = run[0] as ChatItem
+      rows.push(
+        <div key={runStart} className="row tool">
+          {run.length === 1 ? <ToolChip item={first} /> : <ToolStepsGroup items={run} />}
+        </div>,
       )
+      run = []
     }
-    return <AssistantRow
-      key={index}
-      item={item}
-      trailing={trailing}
-      streaming={streaming}
-      onReply={beginReply}
-      onRetry={retry}
-      avatar={botAvatar}
-      onAvatarClick={openCharacterMenu}
-    />
-  }), [items, streaming, beginReply, retry, botAvatar, openCharacterMenu])
+    items.forEach((item, index) => {
+      if (item.role === 'tool') {
+        if (run.length === 0) runStart = index
+        run.push(item)
+        return
+      }
+      flushRun()
+      const trailing = index === items.length - 1
+      if (item.role === 'compaction') {
+        rows.push(<CompactionRow key={index} item={item} />)
+        return
+      }
+      if (item.role === 'user') {
+        rows.push(<UserRow key={index} item={item} trailing={trailing} streaming={streaming} onReply={beginReply} onRetry={retry} />)
+        return
+      }
+      rows.push(<AssistantRow
+        key={index}
+        item={item}
+        trailing={trailing}
+        streaming={streaming}
+        onReply={beginReply}
+        onRetry={retry}
+        avatar={botAvatar}
+        onAvatarClick={openCharacterMenu}
+      />)
+    })
+    flushRun()
+    return rows
+  }, [items, streaming, beginReply, retry, botAvatar, openCharacterMenu])
 
   return (
     <div className={collapsed ? 'app collapsed' : 'app'}>
