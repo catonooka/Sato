@@ -529,6 +529,37 @@ describe('agent loop', () => {
       : undefined).toMatchObject({ code: 'MAX_STEPS' })
   })
 
+  it('turns the step cap into a forced final answer instead of an error', async () => {
+    // Two tool-call steps against a cap of three: the third step must run
+    // without tools and carry the answer-now nudge, so the model's gathered
+    // work reaches the user as a completed turn rather than a MAX_STEPS error.
+    const adapter = new MockAdapter([
+      toolCallResponse('c1', 'echo', { text: 'one' }),
+      toolCallResponse('c2', 'echo', { text: 'two' }),
+      textResponse('here is what the tools found'),
+    ])
+    const ctx = await harness(adapter, '', { maxStepsPerTurn: 3 })
+    ctx.tools.register(defineContentToolFixture({
+      name: 'echo',
+      description: 'echo back',
+      parameters: { text: { type: 'string' } },
+      async execute(args) {
+        return [{ type: 'text', text: `echo: ${args.text}` }]
+      },
+    }))
+    const agent = await ctx.agentLoop.create(SessionId('a1'), { provider: 'mock', model: 'mock' })
+
+    send(agent, 'research then answer')
+    await waitForIdle(ctx, agent)
+
+    expect(adapter.requests).toHaveLength(3)
+    // The capped request offered no tools and carried the forced-answer nudge.
+    expect(adapter.requests[2]!.tools ?? []).toEqual([])
+    expect(String(adapter.requests[2]!.system ?? '')).toContain('tool-call limit')
+    const turnEnd = agent.session.snapshotEvents().findLast(e => e.type === 'turn/end')
+    expect(turnEnd?.type === 'turn/end' ? turnEnd.data.reason.kind : undefined).toBe('completed')
+  })
+
   it('closes an aborted turn even when an aborted fetch grafted a stack accessor onto the cause', async () => {
     // A real in-flight fetch, aborted with a custom cause, grafts a lazy
     // native `stack` accessor onto that cause object — the session log's

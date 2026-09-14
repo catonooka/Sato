@@ -49,6 +49,9 @@ type Phase =
 
 type StepEndReason = Extract<TurnEndReason, { kind: 'completed' | 'max-tokens' }>
 
+/** System nudge carried by the step cap's final, tool-less request. */
+export const FINAL_STEP_ANSWER_NOW = 'You reached the tool-call limit for this turn and no tools are available now. Write your final answer to the user immediately using the information you already gathered; where sources were thin, say what you could not verify.'
+
 type PreparedStep =
   | { kind: 'reject' }
   | {
@@ -370,14 +373,20 @@ export class ReactLoopAgent implements Agent {
     if (this.phase.kind !== 'running') throw new Error(`agent "${this.id}": step outside running phase`)
     const { turn, step, abort: { signal } } = this.phase
     signal.throwIfAborted()
-    const system = renderPrompt(assembly)
+    // The step cap's last step is a forced answer: a model that spent every
+    // earlier step on tool calls gets the tools taken away, so the turn ends
+    // with the answer it owes the user instead of a MAX_STEPS error.
+    const finalAnswerStep = step === this.loopCtx.agentLoop.config.maxStepsPerTurn
+    const system = finalAnswerStep
+      ? `${renderPrompt(assembly)}\n\n${FINAL_STEP_ANSWER_NOW}`
+      : renderPrompt(assembly)
 
     while (true) {
       const surfaceGeneration = this.session.surface.replaceGeneration
       const { request, preparedCall } = await this.buildRequest(
         turn,
         step,
-        assembly.tools,
+        finalAnswerStep ? [] : assembly.tools,
         system,
         this.session.deriveMessages(),
         startsRequestSeries,
