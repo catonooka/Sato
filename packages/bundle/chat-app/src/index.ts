@@ -1653,6 +1653,12 @@ export function projectSurfaceEvent(event: SessionEvent): ChatItem | undefined {
       const meta = event.data.meta
       if (typeof meta === 'object' && meta !== null && !Array.isArray(meta)) {
         const record = meta as Record<string, unknown>
+        // A page fetch's meta is {url, statusCode, truncated}: no name rides
+        // it, so recognize the shape and label the chip a fetch, not a
+        // nameless search.
+        if (item.name === 'web_search' && typeof record.statusCode === 'number' && typeof record.url === 'string') {
+          item.name = 'web_fetch'
+        }
         if (typeof record.name === 'string' && record.name !== '') item.name = record.name
         if (typeof record.query === 'string') item.query = record.query
         if (typeof record.searchQuestion === 'string') item.searchQuestion = record.searchQuestion

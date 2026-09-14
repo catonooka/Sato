@@ -798,6 +798,25 @@ describe('streaming turn', () => {
     await screen.findByText('here are your five posts', {}, { timeout: 3000 })
   })
 
+  it('renders a page fetch as a Fetched chip with the hostname, not a nameless search', async () => {
+    localStorage.setItem('dsh-chat-active', 'sess-a')
+    await renderApp({
+      sessions: [{
+        id: 'sess-a',
+        title: 'A',
+        items: [
+          { role: 'user', text: 'tìm bài hát nổi nhất' },
+          { role: 'tool', name: 'web_fetch', url: 'https://moe.io.vn/pages/blogs/top-12' },
+          { role: 'assistant', text: 'đây là danh sách' },
+        ],
+      }],
+    })
+    await screen.findByText('Fetched · moe.io.vn', {}, { timeout: 3000 })
+    // The chip opens to the full URL link.
+    fireEvent.click(screen.getByText('Fetched · moe.io.vn'))
+    await screen.findByText('https://moe.io.vn/pages/blogs/top-12')
+  })
+
   it('renders a browser card from history with the browsed label', async () => {
     localStorage.setItem('dsh-chat-active', 'sess-a')
     await renderApp({

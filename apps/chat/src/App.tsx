@@ -236,9 +236,48 @@ const AssistantText = memo(function AssistantText({ text, streaming }: { text: s
 /** Steps that act on the page rather than read it; their chips say Acting. */
 const ACTING_ACTIONS = new Set(['click', 'type', 'press', 'scroll', 'back'])
 
+/** Hostname of one URL for short chip labels; the raw string when unparseable. */
+function hostnameOf(url: string): string {
+  try {
+    return new URL(url).hostname
+  } catch {
+    return url
+  }
+}
+
 const ToolChip = memo(function ToolChip({ item }: { item: ChatItem }): JSX.Element {
   const [open, setOpen] = useState(false)
   const count = item.sources?.length
+  // Page fetches get their own face: a document icon and the fetched URL, so
+  // a read shows as a read instead of a nameless search.
+  if (item.name === 'web_fetch') {
+    const failed = item.error === true && item.running !== true
+    const host = item.url !== undefined ? hostnameOf(item.url) : ''
+    return (
+      <div className="tool-chip-wrap">
+        <button type="button" className={`tool-chip${failed ? ' failed' : ''}`} onClick={() => { setOpen(value => !value) }}>
+          <svg className="tool-icon" viewBox="0 0 16 16" aria-hidden="true">
+            <path d="M4 1.5h5.5L13 5v9.5H4z" fill="none" stroke="currentColor" strokeWidth="1.5" />
+            <path d="M9.5 1.5V5H13" fill="none" stroke="currentColor" strokeWidth="1.5" />
+          </svg>
+          <span className="tool-label">
+            {item.running === true ? 'Fetching' : 'Fetched'}
+            {host === '' ? '' : ` · ${host}`}
+            {failed ? ' · failed' : ''}
+          </span>
+        </button>
+        {open && item.url !== undefined
+          ? (
+            <div className="tool-sources">
+              {isSafeHref(item.url)
+                ? <a href={item.url} target="_blank" rel="noopener noreferrer">{item.url}</a>
+                : <span>{item.url}</span>}
+            </div>
+          )
+          : undefined}
+      </div>
+    )
+  }
   // Browser steps get their own face: a globe, the action and page instead of
   // a search question, and the page excerpt behind the toggle.
   if (item.action !== undefined || item.name === 'browser') {

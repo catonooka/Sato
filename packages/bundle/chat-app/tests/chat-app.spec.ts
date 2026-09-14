@@ -89,6 +89,23 @@ it('skips empty (tool-call-only) assistant messages and empty user payloads', ()
     .toBeUndefined()
   expect(projectSurfaceEvent(surfaceEvent('user/message', { content: [] })))
     .toBeUndefined()
+
+})
+
+it('labels a page fetch from its url+statusCode meta instead of a nameless search', () => {
+  const projected = projectSurfaceEvent(surfaceEvent('tool/result', {
+    message: { content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'page body' }] }] },
+    meta: { url: 'https://moe.io.vn/pages/blogs/top-12', statusCode: 200, truncated: false },
+  }))
+  expect(projected).toMatchObject({ role: 'tool', name: 'web_fetch', url: 'https://moe.io.vn/pages/blogs/top-12' })
+})
+
+it('keeps a search meta named web_search even though it carries a url-less shape', () => {
+  const projected = projectSurfaceEvent(surfaceEvent('tool/result', {
+    message: { content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'ok' }] }] },
+    meta: { query: 'node 25', searchedAt: '2026-09-14T00:00:00.000Z', sources: [], truncated: false },
+  }))
+  expect(projected).toMatchObject({ role: 'tool', name: 'web_search', query: 'node 25' })
 })
 
 it('projects a web_search result from its presentation meta', () => {
