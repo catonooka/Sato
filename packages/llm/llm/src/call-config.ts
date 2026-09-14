@@ -27,6 +27,12 @@ export interface LlmCallConfig {
   temperature?: number
   maxTokens?: number
   stop?: string[]
+  /**
+   * Force this call to one named tool (OpenAI-style `tool_choice`); absent
+   * means the model chooses freely. Per-call only: the loop builds requests
+   * from the logged header rather than accepting these per call.
+   */
+  toolChoice?: { name: string }
 }
 
 /**
@@ -53,6 +59,7 @@ export function callConfigEquals(a: LlmCallConfig, b: LlmCallConfig): boolean {
     || a.reasoningEffort !== b.reasoningEffort
     || a.temperature !== b.temperature
     || a.maxTokens !== b.maxTokens
+    || a.toolChoice?.name !== b.toolChoice?.name
   ) return false
   if (a.stop === undefined || b.stop === undefined) return a.stop === b.stop
   return a.stop.length === b.stop.length && a.stop.every((s, i) => s === b.stop?.[i])

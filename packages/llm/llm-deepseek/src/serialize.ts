@@ -380,6 +380,11 @@ function requestWithMessages(
       ? { reasoning_effort: resolvedThinking.reasoningEffort }
       : {},
     ...tools !== undefined && tools.length > 0 ? { tools } : {},
+    // A forced choice is meaningless without tools on the wire, so it rides
+    // only when the request actually carries a tool list.
+    ...options.toolChoice !== undefined && tools !== undefined && tools.length > 0
+      ? { tool_choice: { type: 'function', function: { name: options.toolChoice.name } } }
+      : {},
     ...options.temperature !== undefined ? { temperature: options.temperature } : {},
     ...options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens },
     ...options.stop !== undefined ? { stop: options.stop } : {},

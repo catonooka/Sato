@@ -47,6 +47,7 @@ import {
   bridgeClientOf,
   CHROME_NOT_CONNECTED,
   createUserChromeSearch,
+  wantsForcedSearch,
   settingsJson,
   isExtensionBridgePath,
   sessionVisibleToUser,
@@ -215,6 +216,23 @@ describe('bridgeClientOf', () => {
     expect(bridgeClientOf(urlOf('wait=25&client=work'))).toBe('work')
     expect(bridgeClientOf(urlOf('wait=25&client=%20guest%20'))).toBe('guest')
     expect(bridgeClientOf(urlOf(`client=${'x'.repeat(80)}`))).toHaveLength(64)
+  })
+})
+
+describe('wantsForcedSearch — find-intent gate', () => {
+  it('forces the search tool for find phrasings in English and Vietnamese', () => {
+    expect(wantsForcedSearch('search the web for the current Node.js version')).toBe(true)
+    expect(wantsForcedSearch('can you find 5 famous songs by this artist?')).toBe(true)
+    expect(wantsForcedSearch('tìm 5 bài hát cực nổi của Sơn Tùng M-TP')).toBe(true)
+    expect(wantsForcedSearch('hãy tra cứu giá vàng hôm nay')).toBe(true)
+  })
+
+  it('leaves ordinary conversation alone', () => {
+    expect(wantsForcedSearch('hello there')).toBe(false)
+    expect(wantsForcedSearch('what is 7 times 6?')).toBe(false)
+    expect(wantsForcedSearch('viết giúp tôi một bài thơ')).toBe(false)
+    // English intent words inside longer words must not fire.
+    expect(wantsForcedSearch('I defined the structure you asked about')).toBe(false)
   })
 })
 

@@ -256,6 +256,23 @@ export function hasUsableCredentials(
 /** The refusal body every turn-start route answers while unconfigured. */
 const NO_ENDPOINT_ERROR = 'no endpoint configured — open Settings, add your base URL and API key, then try again'
 
+/** User phrasings that ask for a lookup: the turn must open with a real
+ * search, never a memory answer dressed up with invented citations. */
+const FIND_INTENT = /\b(?:search|find|look\s?up|google)\b|tìm|tra\s?cứu|kiếm/i
+
+/**
+ * Whether one outgoing user message asks the model to find or look
+ * something up, in English or Vietnamese.
+ * @param text - the raw message text from the composer.
+ * @returns true when the turn's first model step should force `web_search`.
+ */
+export function wantsForcedSearch(text: string): boolean {
+  return FIND_INTENT.test(text)
+}
+
+/** Sessions whose next first model step must force a `web_search` call. */
+const pendingForcedSearch = new Set<string>()
+
 /**
  * Name the provider a failed turn actually ran against: the character's own
  * name and endpoint lead the message, so an error relates to where the
@@ -2333,10 +2350,20 @@ export function apply(ctx: Context, config: Config): void {
   // config on its way out so every conversation request carries the
   // current settings temperature (the generator's hand-built call is
   // untouched). Reading the store per request keeps panel edits live.
-  ctx.on('agent/request', async (_payload, next) => {
+  // The same patch point forces the first model step of a "find this" turn
+  // to call web_search: a small model told to search still answers from
+  // memory half the time, and an unsearched answer to a find-request is
+  // exactly the confident-but-wrong reply this surface must never show.
+  ctx.on('agent/request', async (payload, next) => {
     const base = await next()
     const temperature = settings.temperature
-    return temperature === undefined ? base : { ...base, temperature }
+    const sessionId = String(payload.agent.session.id)
+    const forceSearch = payload.step === 1 && pendingForcedSearch.delete(sessionId) === true
+    return {
+      ...base,
+      ...temperature !== undefined ? { temperature } : {},
+      ...forceSearch ? { toolChoice: { name: 'web_search' } } : {},
+    }
   })
 
   // Auto-compaction triggers, gated on the settings toggle (on unless the
@@ -2930,6 +2957,9 @@ export function apply(ctx: Context, config: Config): void {
           sendJson(res, 400, { error: 'a message needs text or an attachment' })
           return
         }
+        // A find-request must not become an unsearched memory answer: arm
+        // the first model step of this turn to force a web_search call.
+        if (wantsForcedSearch(text)) pendingForcedSearch.add(sessionId)
         // The reply target quotes one message in the thread; it rides the
         // message as display metadata, never inside the model-facing content.
         let replyTo: ReplyContext | undefined

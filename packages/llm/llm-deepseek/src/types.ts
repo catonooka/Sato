@@ -20,6 +20,8 @@ export interface WireRequest {
   /** Thinking effort (official levels). */
   reasoning_effort?: 'low' | 'high' | 'max'
   tools?: WireTool[]
+  /** Forced function choice (OpenAI `tool_choice`); only sent with tools. */
+  tool_choice?: { type: 'function'; function: { name: string } }
   temperature?: number
   max_tokens?: number
   /**

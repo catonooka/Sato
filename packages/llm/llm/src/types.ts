@@ -434,6 +434,12 @@ export interface GenerateOptions {
   system?: string
   /** Tool schemas (adapters map to the provider's `tools` field). */
   tools?: ToolSchema[]
+  /**
+   * Force this generation to call exactly one named tool (OpenAI-style
+   * `tool_choice`); absent means the model chooses freely. Only meaningful
+   * together with {@link tools}.
+   */
+  toolChoice?: { name: string }
   temperature?: number
   maxTokens?: number
   /**
