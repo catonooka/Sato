@@ -331,6 +331,17 @@ describe('cordis.patch.yml tool mount', () => {
     expect(mount).toBeDefined()
     expect(mount?.config).toMatchObject({ maxStepsPerTurn: 16 })
   })
+
+  it('mounts web_fetch for page reading with the bundle search tool off', () => {
+    const raw = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
+    const doc = load(raw.replace(/!!js /gu, ''))
+    const mount = findPlugin(doc, 'tool-web')
+    expect(mount).toBeDefined()
+    expect(mount?.config).toMatchObject({ search: false, fetch: true, fetchTimeoutMs: 20_000, fetchMaxOutputChars: 24_000 })
+    // The fetch provider is pinned on the web seam.
+    const web = findPlugin(doc, 'web')
+    expect(web?.config).toMatchObject({ fetchProvider: 'http' })
+  })
 })
 
 describe('applySettingsPatch — auto-compact toggle', () => {

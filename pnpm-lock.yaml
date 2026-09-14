@@ -1668,6 +1668,9 @@ importers:
       '@deepseek-ai/dsh-tool-call-timeout-policy':
         specifier: workspace:^
         version: link:../../guard/timeout-policy
+      '@deepseek-ai/dsh-tool-web':
+        specifier: workspace:^
+        version: link:../../web/tool-web
       '@deepseek-ai/dsh-tool-web-search-tiny':
         specifier: workspace:^
         version: link:../../web/tool-web-search-tiny
@@ -1680,6 +1683,9 @@ importers:
       '@deepseek-ai/dsh-web-app':
         specifier: workspace:^
         version: link:../web-app
+      '@deepseek-ai/dsh-web-fetch-http':
+        specifier: workspace:^
+        version: link:../../web/web-fetch-http
       '@deepseek-ai/dsh-web-search-chrome':
         specifier: workspace:^
         version: link:../../web/web-search-chrome
