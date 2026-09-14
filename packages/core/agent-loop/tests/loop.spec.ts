@@ -553,9 +553,15 @@ describe('agent loop', () => {
     await waitForIdle(ctx, agent)
 
     expect(adapter.requests).toHaveLength(3)
-    // The capped request offered no tools and carried the forced-answer nudge.
+    // The capped request offered no tools and carried the forced-answer nudge
+    // plus a closing user instruction tool-habituated models answer to.
     expect(adapter.requests[2]!.tools ?? []).toEqual([])
     expect(String(adapter.requests[2]!.system ?? '')).toContain('tool-call limit')
+    const lastMessage = adapter.requests[2]!.messages.at(-1)
+    expect(lastMessage?.role).toBe('user')
+    expect(JSON.stringify(lastMessage?.content)).toContain('last step of this turn')
+    // Earlier requests carry no synthetic closing instruction.
+    expect(JSON.stringify(adapter.requests[1]!.messages)).not.toContain('last step of this turn')
     const turnEnd = agent.session.snapshotEvents().findLast(e => e.type === 'turn/end')
     expect(turnEnd?.type === 'turn/end' ? turnEnd.data.reason.kind : undefined).toBe('completed')
   })

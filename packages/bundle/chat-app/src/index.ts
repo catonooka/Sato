@@ -1650,6 +1650,13 @@ function toolResultFailed(message: { content: readonly ContentBlock[] } | undefi
  *   live dispatch of a message-producing type).
  * @returns the projected item.
  */
+/** The step cap's closing instruction is loop machinery, not user speech. */
+function isFinalAnswerInstruction(source: unknown): boolean {
+  return typeof source === 'object' && source !== null
+    && (source as { kind?: unknown }).kind === 'plugin'
+    && (source as { plugin?: unknown }).plugin === 'agent-loop-final-answer'
+}
+
 export function projectSurfaceEvent(event: SessionEvent): ChatItem | undefined {
   switch (event.type) {
     case 'user/message': {
@@ -1661,6 +1668,7 @@ export function projectSurfaceEvent(event: SessionEvent): ChatItem | undefined {
         const summary = textOf(event.data.content)
         return summary === '' ? undefined : { role: 'compaction', text: summary }
       }
+      if (checkpointSource !== undefined && isFinalAnswerInstruction(checkpointSource)) return undefined
       const text = textOf(event.data.content)
       const attachments = attachmentDescriptors(event.data.content)
       // Queue bookkeeping can produce empty user payloads; nothing to render.
@@ -2462,6 +2470,7 @@ export function apply(ctx: Context, config: Config): void {
           broadcast(sessionId, { t: 'compaction', text: textOf(event.data.content) })
           break
         }
+        if (checkpointSource !== undefined && isFinalAnswerInstruction(checkpointSource)) break
         broadcast(sessionId, { t: 'user', text: textOf(event.data.content) })
         break
       }

@@ -100,6 +100,14 @@ it('labels a page fetch from its url+statusCode meta instead of a nameless searc
   expect(projected).toMatchObject({ role: 'tool', name: 'web_fetch', url: 'https://moe.io.vn/pages/blogs/top-12' })
 })
 
+it('skips the step cap closing instruction instead of echoing it as a user row', () => {
+  const projected = projectSurfaceEvent(surfaceEvent('user/message', {
+    content: [{ type: 'text', text: 'This is the last step of this turn: no more tool calls are possible.' }],
+    source: { kind: 'plugin', plugin: 'agent-loop-final-answer' },
+  }))
+  expect(projected).toBeUndefined()
+})
+
 it('keeps a search meta named web_search even though it carries a url-less shape', () => {
   const projected = projectSurfaceEvent(surfaceEvent('tool/result', {
     message: { content: [{ type: 'tool-result', toolCallId: 'c1', content: [{ type: 'text', text: 'ok' }] }] },

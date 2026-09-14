@@ -20,6 +20,7 @@ import type { GenerateOptions, LlmCallConfig, Message, PreparedLlmCall } from '@
 import {
   LlmError,
   createAssistantMessage,
+  createUserMessage,
   errorChain,
   markAgentLoopRequest,
 } from '@deepseek-ai/dsh-llm'
@@ -51,6 +52,34 @@ type StepEndReason = Extract<TurnEndReason, { kind: 'completed' | 'max-tokens' }
 
 /** System nudge carried by the step cap's final, tool-less request. */
 export const FINAL_STEP_ANSWER_NOW = 'You reached the tool-call limit for this turn and no tools are available now. Write your final answer to the user immediately using the information you already gathered; where sources were thin, say what you could not verify.'
+
+/** Surface provenance of the step cap's closing instruction. */
+const FINAL_ANSWER_SOURCE = Object.freeze({ kind: 'plugin', plugin: 'agent-loop-final-answer' } as const)
+
+/**
+ * Whether one message provenance is the step cap's closing instruction, so
+ * chat surfaces can skip rendering it as something the user said.
+ */
+export function isFinalAnswerSource(source: unknown): boolean {
+  return typeof source === 'object' && source !== null
+    && (source as { kind?: unknown }).kind === 'plugin'
+    && (source as { plugin?: unknown }).plugin === 'agent-loop-final-answer'
+}
+
+/**
+ * The closing instruction the step cap's final step appends to the history. A
+ * system nudge alone leaves tool-habituated models mid-research ("let me pull
+ * one more section"); the final word coming from the user turn is the shape
+ * those models answer to. Durable like a runtime-context snapshot — request
+ * reconstruction reads it from the log — but marked as plugin provenance so
+ * surfaces render nothing for it.
+ */
+export function finalAnswerMessage(): UserMessage {
+  return createUserMessage({
+    content: [{ type: 'text', text: 'This is the last step of this turn: no more tool calls are possible. Give your complete final answer to my original question now, using what you already gathered. Say which parts you could not verify.' }],
+    source: FINAL_ANSWER_SOURCE,
+  })
+}
 
 type PreparedStep =
   | { kind: 'reject' }
@@ -380,6 +409,11 @@ export class ReactLoopAgent implements Agent {
     const system = finalAnswerStep
       ? `${renderPrompt(assembly)}\n\n${FINAL_STEP_ANSWER_NOW}`
       : renderPrompt(assembly)
+    if (finalAnswerStep) {
+      // Durable, plugin-provenance: request reconstruction reads it from the
+      // log, and surfaces skip it — it is not something the user said.
+      this.session.append('user/message', finalAnswerMessage(), { surfaceOp: 'append' })
+    }
 
     while (true) {
       const surfaceGeneration = this.session.surface.replaceGeneration
