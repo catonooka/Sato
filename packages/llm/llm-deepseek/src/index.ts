@@ -78,7 +78,9 @@ export { DeepSeekFileId } from './file-id.ts'
 export type { DeepSeekFileId as DeepSeekFileIdType } from './file-id.ts'
 export { DeepSeekUploadIndex, deepSeekFileScope } from './upload-index.ts'
 export type { DeepSeekUploadRecord } from './upload-index.ts'
+import { speaksChatTemplateDialect } from './serialize.ts'
 export type { RequestDefaults } from './serialize.ts'
+export { speaksChatTemplateDialect } from './serialize.ts'
 export type * from './types.ts'
 
 export const name = 'llm-deepseek'
@@ -379,14 +381,19 @@ export function resolveAdapterOptions(config: Config, environment?: LaunchEnviro
     || fileQuotaCleanupBatch > 1_000) {
     throw new Error('llm-deepseek: fileQuotaCleanupBatch must be an integer from 1 through 1000')
   }
+  const baseURL = config.baseURL
+    ?? environment?.get(BASE_URL_ENV)?.value
+    ?? PUBLIC_BASE_URL
   return {
     apiKeyEnv: credentialRef(config.apiKeyEnv ?? DEFAULT_API_KEY_ENV),
-    baseURL: config.baseURL
-      ?? environment?.get(BASE_URL_ENV)?.value
-      ?? PUBLIC_BASE_URL,
+    baseURL,
     defaults: {
       thinking: config.thinking,
       reasoningEffort: config.reasoningEffort,
+      // A non-DeepSeek endpoint ignores the native `thinking` param, so its
+      // qwen-style template needs the explicit kwarg or thinking output is
+      // silently dropped (an answer born inside thinking completes empty).
+      chatTemplateThinking: speaksChatTemplateDialect(baseURL),
     },
     maxTokens: config.maxTokens ?? DEFAULT_MAX_TOKENS,
     defaultContextWindow: config.defaultContextWindow ?? DEFAULT_CONTEXT_WINDOW,

@@ -17,6 +17,8 @@ export interface WireRequest {
   stream_options: { include_usage: true }
   /** Thinking-mode toggle (top level, NOT inside extra_body on the wire). */
   thinking?: { type: 'enabled' | 'disabled' }
+  /** vLLM chat-template override; keeps qwen-style thinking parseable. */
+  chat_template_kwargs?: { enable_thinking: boolean }
   /** Thinking effort (official levels). */
   reasoning_effort?: 'low' | 'high' | 'max'
   tools?: WireTool[]

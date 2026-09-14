@@ -8,6 +8,7 @@ import {
   serializeMessagesWithImages,
   serializeRequest,
   serializeRequestWithImages,
+  speaksChatTemplateDialect,
 } from '../src/serialize.ts'
 import type { ImageSerializationOptions } from '../src/serialize.ts'
 
@@ -275,6 +276,24 @@ describe('serializeRequest', () => {
   it('omits an empty tools array', () => {
     const wire = serializeRequest(request({ messages: history, tools: [] }))
     expect(wire.tools).toBeUndefined()
+  })
+
+  it('opts a chat-template endpoint into parseable thinking', () => {
+    const wire = serializeRequest(request({ messages: history }), { chatTemplateThinking: true })
+    expect(wire.chat_template_kwargs).toEqual({ enable_thinking: true })
+  })
+
+  it('leaves the DeepSeek-native dialect untouched by default', () => {
+    const wire = serializeRequest(request({ messages: history }))
+    expect(wire.chat_template_kwargs).toBeUndefined()
+  })
+
+  it('classifies official DeepSeek hosts against chat-template servers', () => {
+    expect(speaksChatTemplateDialect('https://api.deepseek.com/v1')).toBe(false)
+    expect(speaksChatTemplateDialect('https://api.deepseek.com')).toBe(false)
+    expect(speaksChatTemplateDialect('http://192.168.1.105:8081/v1')).toBe(true)
+    expect(speaksChatTemplateDialect('https://mllm.example.com/v1')).toBe(true)
+    expect(speaksChatTemplateDialect('not a url')).toBe(false)
   })
 
   it('maps a forced tool choice onto the wire, but only with tools present', () => {

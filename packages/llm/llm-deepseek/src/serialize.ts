@@ -22,6 +22,30 @@ import type {
 export interface RequestDefaults {
   thinking?: 'enabled' | 'disabled' | undefined
   reasoningEffort?: 'off' | 'low' | 'high' | 'max' | undefined
+  /**
+   * The endpoint speaks vLLM's chat-template dialect rather than DeepSeek's
+   * own API: qwen-style templates default `enable_thinking` off and silently
+   * drop the thinking block, so a model that answers inside its thinking
+   * completes with no content at all. Truthy emits the template kwarg that
+   * keeps thinking parseable as `reasoning_content`.
+   */
+  chatTemplateThinking?: boolean
+}
+
+/**
+ * Whether one endpoint URL is an official DeepSeek host. Anything else is an
+ * OpenAI-compatible server (vLLM and friends): the native `thinking` param is
+ * a no-op there, so thinking control rides `chat_template_kwargs` instead.
+ * @param baseURL - the resolved endpoint base.
+ * @returns false only for `api.deepseek.com` (and unparseable URLs, which
+ *   change nothing downstream).
+ */
+export function speaksChatTemplateDialect(baseURL: string): boolean {
+  try {
+    return new URL(baseURL).hostname !== 'api.deepseek.com'
+  } catch {
+    return false
+  }
 }
 
 interface ResolvedThinking {
@@ -376,6 +400,7 @@ function requestWithMessages(
     stream: true,
     stream_options: { include_usage: true },
     ...resolvedThinking.thinking !== undefined ? { thinking: { type: resolvedThinking.thinking } } : {},
+    ...defaults.chatTemplateThinking === true ? { chat_template_kwargs: { enable_thinking: true } } : {},
     ...resolvedThinking.reasoningEffort !== undefined
       ? { reasoning_effort: resolvedThinking.reasoningEffort }
       : {},
