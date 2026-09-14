@@ -41,7 +41,7 @@ import { ContextMenu, type ContextMenuItem } from './ContextMenu.tsx'
 import { CharacterMenu, RenameCharacterDialog } from './CharacterMenu.tsx'
 import { NewCharacterModal } from './NewCharacterModal.tsx'
 import { UserMenu } from './UserMenu.tsx'
-import { botAvatarSrc, avatarSrc, readStoredAvatar, storeAvatar } from './avatar.ts'
+import { botAvatarSrc, avatarSrc, storeAvatar } from './avatar.ts'
 import { StreamFeed } from './delta.ts'
 import { copyToClipboard } from './clipboard.ts'
 import { replyLabel, replyTargetFor, type ReplyContext } from './reply.ts'
@@ -656,15 +656,10 @@ export default function App(): JSX.Element {
         setActiveUserId(resolved)
         listOwnerRef.current = resolved
         setUsers(body.users)
-        const fallback = body.users.find(user => user.id === body.defaultUserId)
-        if (fallback !== undefined && fallback.avatar === undefined) {
-          const legacy = readStoredAvatar()
-          if (legacy !== null) {
-            void updateUser(body.defaultUserId, { avatar: legacy })
-              .then((updated) => { if (!cancelled) setUsers(updated.users) })
-              .catch(() => { /* the profile keeps the placeholder avatar */ })
-          }
-        }
+        // A user with no avatar is an un-onboarded account: the required
+        // avatar dialog opens for them. The browser's legacy local pick used
+        // to silently pre-seed it here, which quietly swallowed a fresh
+        // server's onboarding — wiping server data now always onboards.
         const remembered = typeof localStorage !== 'undefined'
           ? localStorage.getItem(activeChatKey(resolved))
           : null

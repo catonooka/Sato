@@ -1120,11 +1120,16 @@ describe('user profiles', () => {
     await waitFor(() => { expect(listHeaders[listHeaders.length - 1]).toBe('u_new') })
   })
 
-  it('seeds the default profile\'s avatar from the legacy local pick', async () => {
+  it('opens onboarding for a legacy local pick instead of silently seeding it', async () => {
     localStorage.setItem('dsh-chat-avatar', '3')
     const { userPatches } = await renderApp({
       users: [{ id: 'u_main', name: 'catonooka' }],
     })
+    // The browser's remembered avatar must not quietly onboard the account:
+    // the dialog opens, nothing is written until the user picks.
+    await screen.findByRole('dialog', { name: 'Choose your avatar' })
+    expect(userPatches).toEqual([])
+    fireEvent.click(within(screen.getByRole('dialog', { name: 'Choose your avatar' })).getByRole('button', { name: 'Avatar 3' }))
     await waitFor(() => { expect(userPatches).toEqual([{ id: 'u_main', body: { avatar: 3 } }] ) })
   })
 
