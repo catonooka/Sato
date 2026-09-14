@@ -228,13 +228,15 @@ export const WEB_SEARCH_DESCRIPTION = 'Search the web for current information. P
   + 'If a search returns no results or fails, do not reword it and search again — answer from what you already know and tell the user you could not verify it online.'
 
 /**
- * Tokenize one search query for similarity: lowercase, split on everything
- * that cannot be part of a word or version number.
+ * Tokenize one search query for similarity: lowercase, split on anything
+ * that is not a letter, number, underscore, or dot (versions like `26.8`).
+ * Unicode letters stay whole, so Vietnamese and other diacritic scripts
+ * compare by real words instead of fragmenting into stray ASCII letters.
  * @param query - the search question as sent to the engines.
  * @returns the set of normalized tokens.
  */
 export function queryTokens(query: string): ReadonlySet<string> {
-  return new Set(query.toLowerCase().split(/[^0-9a-zà-ÿ_.]+/u).filter(token => token.length > 0))
+  return new Set(query.toLowerCase().split(/[^\p{L}\p{N}_.]+/u).filter(token => token.length > 0))
 }
 
 /**

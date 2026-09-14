@@ -327,6 +327,14 @@ describe('queryTokens / similarQuery', () => {
     expect(similarQuery(a, b)).toBe(true)
   })
 
+  it('keeps Vietnamese words whole so rewordings compare by real words', () => {
+    const a = queryTokens('5 bài hát nổi tiếng nhất của Sơn Tùng M-TP')
+    const b = queryTokens('Sơn Tùng M-TP 5 bài hát hit nổi tiếng nhất')
+    expect(similarQuery(a, b)).toBe(true)
+    // Different intents in the same language stay apart.
+    expect(similarQuery(queryTokens('cách viết nhạc viral'), queryTokens('5 bài hát nổi tiếng'))).toBe(false)
+  })
+
   it('keeps genuinely different intents apart', () => {
     const a = queryTokens('current stable node.js version 2026')
     const b = queryTokens('node.js 26 release notes announcement')
