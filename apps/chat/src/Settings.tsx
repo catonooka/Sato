@@ -295,7 +295,7 @@ export function SettingsPanel({
     try {
       const outcome = await testChromeSearch('latest ai news')
       setChromeTest(outcome.ok
-        ? `extension · ${String(outcome.count ?? 0)} results · ${((outcome.ms ?? 0) / 1000).toFixed(1)}s`
+        ? `extension · ${String(outcome.count ?? 0)} results${outcome.engine === undefined ? '' : ` via ${outcome.engine}`} · ${((outcome.ms ?? 0) / 1000).toFixed(1)}s`
         : outcome.error ?? 'failed')
       fetchChromeStatus().then(setChromeStatus).catch(() => undefined)
     } catch (err: unknown) {

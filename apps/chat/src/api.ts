@@ -361,6 +361,8 @@ export interface ChromeTestOutcome {
   ok: boolean
   count?: number
   sample?: string[]
+  /** Which general engine produced the results, when the search succeeded. */
+  engine?: string
   ms?: number
   error?: string
 }

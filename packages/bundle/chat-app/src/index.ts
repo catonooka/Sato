@@ -1463,10 +1463,17 @@ export function bridgeClientOf(url: URL): string {
 export interface UserChromeSearchResult {
   sources: ReturnType<typeof toSources>
   truncated: boolean
+  /** Which general engine produced the sources; present for web routes. */
+  engine?: 'google' | 'bing' | 'duckduckgo'
 }
 
 /** A search against "Your Chrome" with no extension heartbeat behind it. */
 export const CHROME_NOT_CONNECTED = 'user-chrome: the Chrome extension is not connected — load the companion extension (Settings → Tools → How to connect) or switch the search tool to Built-in'
+
+/** General engines in fallback order after the configured one: a page that
+ * renders only through JavaScript or answers a bot challenge parses as zero
+ * results, so the search tries the next engine instead of ending empty. */
+const ENGINE_FALLBACK_ORDER: readonly ('google' | 'bing' | 'duckduckgo')[] = ['google', 'bing', 'duckduckgo']
 
 /**
  * Build the user-chrome search entry point over one extension bridge. The
@@ -1484,16 +1491,46 @@ export function createUserChromeSearch(
 ): (request: { query: string; maxResults?: number }) => Promise<UserChromeSearchResult> {
   return async (request) => {
     if (!bridge.seenWithin(EXTENSION_TTL_MS)) throw new Error(CHROME_NOT_CONNECTED)
+    const limit = request.maxResults ?? 5
     const route = routeSearchTarget(request.query, webEngine)
-    const settlement = await bridge.enqueue({
-      kind: route.kind,
-      query: route.query,
-      url: route.url,
-      engine: route.kind === 'x' ? 'x' : webEngine,
-      maxResults: request.maxResults ?? 5,
-    }, EXTENSION_JOB_TIMEOUT_MS)
-    if (!settlement.ok) throw new Error(`user-chrome: the extension search failed: ${settlement.error}`)
-    return { sources: toSources(settlement.sources, request.maxResults ?? 5), truncated: false }
+    if (route.kind === 'x') {
+      const settlement = await bridge.enqueue({
+        kind: route.kind,
+        query: route.query,
+        url: route.url,
+        engine: 'x',
+        maxResults: limit,
+      }, EXTENSION_JOB_TIMEOUT_MS)
+      if (!settlement.ok) throw new Error(`user-chrome: the extension search failed: ${settlement.error}`)
+      return { sources: toSources(settlement.sources, limit), truncated: false }
+    }
+    const engines = [webEngine, ...ENGINE_FALLBACK_ORDER.filter(engine => engine !== webEngine)]
+    let anyAnswered = false
+    let lastError: string | undefined
+    for (const engine of engines) {
+      const target = routeSearchTarget(request.query, engine)
+      const settlement = await bridge.enqueue({
+        kind: 'web',
+        query: request.query,
+        url: target.url,
+        engine,
+        maxResults: limit,
+      }, EXTENSION_JOB_TIMEOUT_MS)
+      if (!settlement.ok) {
+        lastError = settlement.error
+        continue
+      }
+      anyAnswered = true
+      const sources = toSources(settlement.sources, limit)
+      if (sources.length > 0) return { sources, truncated: false, engine }
+    }
+    if (!anyAnswered) {
+      throw new Error(`user-chrome: the extension search failed: ${lastError ?? 'no engine answered'}`)
+    }
+    // Every engine answered with a page it could not turn into results; for a
+    // gibberish query that is the honest answer, so it stays an empty success
+    // and the tool layer's no-results guidance applies.
+    return { sources: [], truncated: false }
   }
 }
 
@@ -3377,6 +3414,7 @@ export function apply(ctx: Context, config: Config): void {
           ok: true,
           count: result.sources.length,
           sample: result.sources.slice(0, 3).map(source => source.title),
+          engine: result.engine,
           ms: Date.now() - startedAt,
         }, chromeCors(req))
       } catch (error: unknown) {

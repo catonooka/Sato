@@ -300,7 +300,47 @@ describe('createUserChromeSearch', () => {
     await expect(pending).resolves.toEqual({
       sources: [{ url: 'https://nodejs.org/en/blog', title: 'Node.js 25' }],
       truncated: false,
+      engine: 'google',
     })
+  })
+
+  it('falls through to the next engine when one answers an unparseable empty page', async () => {
+    const created = new ExtensionBridge()
+    bridges.push(created)
+    created.markSeen()
+    const search = createUserChromeSearch(created, 'google')
+    const pending = search({ query: 'node 25', maxResults: 5 })
+    const google = await created.nextJob(10)
+    expect(google).toMatchObject({ engine: 'google' })
+    // Google serves a JavaScript-only shell: the extension answers ok with no
+    // parseable results, which must not end the search empty-handed.
+    created.settle({ id: google?.id, ok: true, sources: [] })
+    const bing = await created.nextJob(10)
+    expect(bing).toMatchObject({ engine: 'bing', kind: 'web' })
+    created.settle({
+      id: bing?.id,
+      ok: true,
+      sources: [{ url: 'https://nodejs.org/en/blog', title: 'Node.js 25' }],
+    })
+    await expect(pending).resolves.toEqual({
+      sources: [{ url: 'https://nodejs.org/en/blog', title: 'Node.js 25' }],
+      truncated: false,
+      engine: 'bing',
+    })
+  })
+
+  it('keeps an all-engines-empty page as the honest empty success', async () => {
+    const created = new ExtensionBridge()
+    bridges.push(created)
+    created.markSeen()
+    const search = createUserChromeSearch(created, 'bing')
+    const pending = search({ query: 'zzqq xxjj nothing', maxResults: 5 })
+    for (const engine of ['bing', 'google', 'duckduckgo']) {
+      const job = await created.nextJob(10)
+      expect(job).toMatchObject({ engine })
+      created.settle({ id: job?.id, ok: true, sources: [] })
+    }
+    await expect(pending).resolves.toEqual({ sources: [], truncated: false })
   })
 
   it('routes an x:-prefixed query to the x engine inside the extension', async () => {
@@ -315,15 +355,18 @@ describe('createUserChromeSearch', () => {
     await expect(pending).resolves.toEqual({ sources: [], truncated: false })
   })
 
-  it('surfaces an extension failure as the search error', async () => {
+  it('surfaces the last extension failure once every engine was tried', async () => {
     const created = new ExtensionBridge()
     bridges.push(created)
     created.markSeen()
     const search = createUserChromeSearch(created, 'google')
     const pending = search({ query: 'node 25' })
-    const job = await created.nextJob(10)
-    created.settle({ id: job?.id, ok: false, error: 'not logged in' })
-    await expect(pending).rejects.toThrow('user-chrome: the extension search failed: not logged in')
+    for (const engine of ['google', 'bing', 'duckduckgo']) {
+      const job = await created.nextJob(10)
+      expect(job).toMatchObject({ engine })
+      created.settle({ id: job?.id, ok: false, error: `${engine} exploded` })
+    }
+    await expect(pending).rejects.toThrow('user-chrome: the extension search failed: duckduckgo exploded')
   })
 })
 
