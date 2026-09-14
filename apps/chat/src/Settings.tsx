@@ -109,6 +109,7 @@ export function SettingsPanel({
   const [searchTool, setSearchTool] = useState<'tiny-metasearch' | 'user-chrome'>(
     config.searchTool === 'user-chrome' ? 'user-chrome' : 'tiny-metasearch')
   const [autoCompact, setAutoCompact] = useState<boolean>(config.autoCompact !== false)
+  const [browserTool, setBrowserTool] = useState<boolean>(config.browserTool === true)
   const [models, setModels] = useState<string[]>([])
   const [loadingModels, setLoadingModels] = useState(false)
   const [abilities, setAbilities] = useState<ModelAbilities | undefined>(undefined)
@@ -307,7 +308,7 @@ export function SettingsPanel({
   const save = async (): Promise<void> => {
     setSaving(true)
     try {
-      const patch: SettingsPatch = { model, reasoningEffort: effort, persona, greeting, searchTool, autoCompact }
+      const patch: SettingsPatch = { model, reasoningEffort: effort, persona, greeting, searchTool, autoCompact, browserTool }
       if (activeId !== (config.activeProfileId ?? config.profiles?.[0]?.id)) patch.switchProfile = activeId
       if (temperature === undefined) patch.temperature = null
       else patch.temperature = temperature
@@ -749,8 +750,35 @@ export function SettingsPanel({
               ))}
             </div>
             <span className="settings-hint">
-              Your Chrome runs the search with this browser's logins — the companion extension, or the debug
-              {' '}port as a fallback. The model can prefix a query with x: to search your X.
+              Your Chrome runs the search with this browser's logins, through the companion extension —
+              {' '}no tab ever opens. The model can prefix a query with x: to search your X.
+            </span>
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">Browser tool</span>
+            <div className="segmented" role="radiogroup" aria-label="Browser tool">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={!browserTool}
+                className={!browserTool ? 'segment active' : 'segment'}
+                onClick={() => { setBrowserTool(false) }}
+              >
+                Off
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={browserTool}
+                className={browserTool ? 'segment active' : 'segment'}
+                onClick={() => { setBrowserTool(true) }}
+              >
+                On
+              </button>
+            </div>
+            <span className="settings-hint">
+              Off by default. When on, the model may open and drive tabs in your Chrome through the companion
+              {' '}extension to read pages and act on them. The built-in search never needs this.
             </span>
           </div>
           {searchTool === 'user-chrome'

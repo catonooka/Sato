@@ -89,6 +89,7 @@ export interface AppConfig {
   endpointReady?: boolean
   searchTool?: string
   autoCompact?: boolean
+  browserTool?: boolean
   activeProfileId?: string
   profiles?: ProfileInfo[]
 }
@@ -110,6 +111,9 @@ export interface SettingsPatch {
   searchTool?: string
   /** Toggle conversation auto-compaction; `null` restores the default (on). */
   autoCompact?: boolean | null
+  /** Let the model drive real Chrome tabs via the companion extension;
+   * `null` or `false` restores the default (off). */
+  browserTool?: boolean | null
   /** Make this profile active; its fields become the flat projection. */
   switchProfile?: string
   renameProfile?: { id: string; name: string }

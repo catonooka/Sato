@@ -350,6 +350,34 @@ describe('parseSettingsFile — auto-compact toggle', () => {
   })
 })
 
+describe('browser tool opt-in', () => {
+  it('sets the opt-in and clears it with null or false', () => {
+    const on = applySettingsPatch(baseSettings, { browserTool: true })
+    expect(on.browserTool).toBe(true)
+    const cleared = applySettingsPatch(on, { browserTool: null })
+    expect('browserTool' in cleared).toBe(false)
+    const reon = applySettingsPatch(cleared, { browserTool: true })
+    const off = applySettingsPatch(reon, { browserTool: false })
+    expect('browserTool' in off).toBe(false)
+  })
+
+  it('rejects non-boolean values', () => {
+    expect(() => applySettingsPatch(baseSettings, { browserTool: 'on' })).toThrow('browserTool must be a boolean')
+    expect(() => applySettingsPatch(baseSettings, { browserTool: 1 })).toThrow('browserTool must be a boolean')
+  })
+
+  it('defaults to off when the store has no key', () => {
+    expect(parseSettingsFile(undefined, baseConfig).browserTool).toBeUndefined()
+    expect(parseSettingsFile(JSON.stringify({ persona: 'x' }), baseConfig).browserTool).toBeUndefined()
+    expect(parseSettingsFile(JSON.stringify({ browserTool: true }), baseConfig).browserTool).toBe(true)
+  })
+
+  it('serves the effective toggle in settingsJson', () => {
+    expect(settingsJson(baseSettings).browserTool).toBe(false)
+    expect(settingsJson(applySettingsPatch(baseSettings, { browserTool: true })).browserTool).toBe(true)
+  })
+})
+
 describe('parseReplyTo', () => {
   it('accepts a well-formed reply target', () => {
     expect(parseReplyTo({ role: 'assistant', text: 'hello there' }))
@@ -712,6 +740,7 @@ describe('model characters — persona and avatar', () => {
       apiKeySet: true,
       searchTool: 'tiny-metasearch',
       autoCompact: true,
+      browserTool: false,
       activeProfileId: 'a',
       profiles: [
         { id: 'a', name: 'Gateway A', model: 'model-a', persona: 'persona a', greeting: 'ask away', avatar: 12, apiKeySet: true },

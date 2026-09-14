@@ -164,6 +164,10 @@ export interface ChatSettings {
   temperature?: number
   /** Which engine the pinned chat-selector provider dispatches to. */
   searchTool: 'tiny-metasearch' | 'user-chrome'
+  /** Whether the model may drive real Chrome tabs through the companion
+   * extension. Opt-in: absent means off, so nothing touches the user's
+   * browser until they explicitly allow it. */
+  browserTool?: boolean
   /** Whether conversations auto-compact under context pressure; absent = on. */
   autoCompact?: boolean
 }
@@ -769,6 +773,15 @@ export function applySettingsPatch(
         next.autoCompact = value
         break
       }
+      case 'browserTool': {
+        if (value === null || value === false) {
+          delete next.browserTool
+          break
+        }
+        if (typeof value !== 'boolean') throw new Error('browserTool must be a boolean')
+        next.browserTool = value
+        break
+      }
       default:
         throw new Error(`unknown setting "${key}"`)
     }
@@ -954,6 +967,7 @@ export function settingsJson(settings: ChatSettings, envKey = process.env.DEEPSE
     apiKeySet: active.apiKey !== undefined,
     searchTool: settings.searchTool,
     autoCompact: settings.autoCompact ?? true,
+    browserTool: settings.browserTool ?? false,
     activeProfileId: settings.activeProfileId,
     profiles: settings.profiles.map(profile => ({
       id: profile.id,
@@ -988,6 +1002,7 @@ export async function persistSettings(path: string, settings: ChatSettings): Pro
     ...settings.temperature !== undefined ? { temperature: settings.temperature } : {},
     searchTool: settings.searchTool,
     ...settings.autoCompact !== undefined ? { autoCompact: settings.autoCompact } : {},
+    ...settings.browserTool !== undefined ? { browserTool: settings.browserTool } : {},
   }, null, 2)}\n`
   await writeFileAtomic(path, body)
 }
@@ -2133,19 +2148,34 @@ export function apply(ctx: Context, config: Config): void {
 
   // The browser tool rides the same bridge as Chrome search: the model drives
   // a real tab in the user's own browser, step by step, with their logins.
-  // Steps the model did not pin to a Chrome profile default to the profile
-  // the chat's owner prefers — bound to the session's owner, not to whoever
-  // is currently switching profiles in some tab, so a running turn keeps its
-  // Chrome profile across user switches.
+  // Because that touches the user's everyday Chrome, it is strictly opt-in —
+  // registered only while the saved settings allow it, and flipped live when
+  // the panel saves. Steps the model did not pin to a Chrome profile default
+  // to the profile the chat's owner prefers — bound to the session's owner,
+  // not to whoever is currently switching profiles in some tab, so a running
+  // turn keeps its Chrome profile across user switches.
+  let syncBrowserTool: () => void = () => {}
   ctx.inject(['tools'], (toolsCtx) => {
-    toolsCtx.tools.register(defineBrowserTool({
-      bridge: extensionBridge,
-      profileForSession: (sessionId) => {
-        const meta = users.sessions[sessionId]
-        if (meta === undefined) return undefined
-        return users.users.find(user => user.id === meta.owner)?.chromeProfile
-      },
-    }))
+    let dispose: (() => void) | undefined
+    const sync = (): void => {
+      if (settings.browserTool === true) {
+        if (dispose !== undefined) return
+        dispose = toolsCtx.tools.register(defineBrowserTool({
+          bridge: extensionBridge,
+          profileForSession: (sessionId) => {
+            const meta = users.sessions[sessionId]
+            if (meta === undefined) return undefined
+            return users.users.find(user => user.id === meta.owner)?.chromeProfile
+          },
+        }))
+      } else if (dispose !== undefined) {
+        dispose()
+        dispose = undefined
+      }
+    }
+    syncBrowserTool = sync
+    sync()
+    ctx.effect(() => () => { dispose?.() }, 'chat-app.browser-tool')
   })
 
   /** Send one SSE payload to every open stream of one session. */
@@ -2524,6 +2554,7 @@ export function apply(ctx: Context, config: Config): void {
         }
         const next = applySettingsPatch(settings, body)
         Object.assign(settings, next)
+        syncBrowserTool()
         await applyLiveModelSettings().catch((error: unknown) => {
           const reason = error instanceof Error ? error.message : String(error)
           console.error(`chat-app: could not apply settings live because ${reason}`)

@@ -1587,6 +1587,33 @@ describe('model characters', () => {
     expect(patch.apiKey).toBe('sk-fresh-key')
   })
 
+  it('sends the browser tool opt-in when the Tools toggle flips on', async () => {
+    const { configPatches } = await renderApp()
+    fireEvent.click(screen.getByRole('button', { name: /catonooka/ }))
+    const panel = await screen.findByRole('dialog', { name: 'Settings' })
+    fireEvent.click(within(panel).getByRole('tab', { name: 'Tools' }))
+    const group = within(panel).getByRole('radiogroup', { name: 'Browser tool' })
+    fireEvent.click(within(group).getByRole('radio', { name: 'On' }))
+    fireEvent.click(within(panel).getByRole('button', { name: 'Save' }))
+    const patch = await waitFor(() => {
+      const found = configPatches.find(body => body.browserTool === true)
+      expect(found).toBeDefined()
+      return found as Record<string, unknown>
+    })
+    expect(patch.browserTool).toBe(true)
+    // Leaving it off keeps sending the explicit default, so a stale saved
+    // opt-in can never survive a Save from the panel.
+    fireEvent.click(screen.getByRole('button', { name: /catonooka/ }))
+    const reopened = await screen.findByRole('dialog', { name: 'Settings' })
+    fireEvent.click(within(reopened).getByRole('tab', { name: 'Tools' }))
+    const reopenedGroup = within(reopened).getByRole('radiogroup', { name: 'Browser tool' })
+    fireEvent.click(within(reopenedGroup).getByRole('radio', { name: 'Off' }))
+    fireEvent.click(within(reopened).getByRole('button', { name: 'Save' }))
+    await waitFor(() => {
+      expect(configPatches.some(body => body.browserTool === false)).toBe(true)
+    })
+  })
+
   it('saves the system prompt onto the character the panel switched to', async () => {
     const { configPatches } = await renderApp({
       config: { activeProfileId: 'pa', profiles },
