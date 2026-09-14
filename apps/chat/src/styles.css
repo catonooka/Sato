@@ -789,6 +789,34 @@ button { font: inherit; color: inherit; background: none; border: none; cursor: 
 }
 .welcome-connect:hover, .welcome-connect:focus-visible { color: var(--fg); }
 
+.settings-tabs {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 10px;
+}
+
+.settings-tab {
+  border: none;
+  background: none;
+  padding: 8px 12px 10px;
+  font-size: 13px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+}
+
+.settings-tab:hover, .settings-tab:focus-visible { color: var(--fg); }
+
+.settings-tab.active {
+  color: var(--fg);
+  border-bottom-color: var(--fg);
+  font-weight: 600;
+}
+
+.settings-tab:focus-visible { outline: 2px solid var(--border); outline-offset: -2px; }
+
 .thread-inner {
   max-width: 720px;
   margin: 0 auto;

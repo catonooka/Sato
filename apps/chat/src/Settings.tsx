@@ -1,6 +1,6 @@
 /** The settings panel: every runtime-configurable option of the chat surface. */
 
-import { useEffect, useState, type JSX } from 'react'
+import { useEffect, useState, type JSX, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { AVATAR_COUNT, avatarSrc, botAvatarTiles } from './avatar.ts'
 import {
   checkModelAbilities,
@@ -56,6 +56,17 @@ export function storeTheme(theme: Theme): void {
   localStorage.setItem(THEME_KEY, theme)
 }
 
+/** The panel's four sections, in tab order. */
+const SETTINGS_TABS = [
+  { id: 'user', label: 'User' },
+  { id: 'provider', label: 'Provider' },
+  { id: 'bot', label: 'Bot' },
+  { id: 'tools', label: 'Tools' },
+] as const
+
+/** One settings section. */
+export type SettingsTab = (typeof SETTINGS_TABS)[number]['id']
+
 interface SettingsProps {
   config: AppConfig
   theme: Theme
@@ -75,11 +86,14 @@ interface SettingsProps {
   /** The Save button's update, which also closes the panel. */
   onSaved: (config: AppConfig) => void
   onClose: () => void
+  /** Which section to open on; "Connect a model" lands on the provider. */
+  initialTab?: SettingsTab
 }
 
 export function SettingsPanel({
-  config, theme, onTheme, avatar, onAvatar, users, activeUserId, onSwitchUser, onUsersUpdated, onApplied, onSaved, onClose,
+  config, theme, onTheme, avatar, onAvatar, users, activeUserId, onSwitchUser, onUsersUpdated, onApplied, onSaved, onClose, initialTab,
 }: SettingsProps): JSX.Element {
+  const [tab, setTab] = useState<SettingsTab>(initialTab ?? 'user')
   const [profiles, setProfiles] = useState<ProfileInfo[]>(config.profiles ?? [])
   const [activeId, setActiveId] = useState(config.activeProfileId ?? config.profiles?.[0]?.id ?? '')
   const [renaming, setRenaming] = useState(false)
@@ -109,6 +123,16 @@ export function SettingsPanel({
   const [chromeClients, setChromeClients] = useState<string[]>([])
   const activeUser = users?.find(user => user.id === activeUserId)
   const [error, setError] = useState<string | undefined>(undefined)
+
+  // Arrow keys walk the tab strip, as a real tab list should.
+  const onTabStripKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>): void => {
+    if (event.key !== 'ArrowRight' && event.key !== 'ArrowLeft') return
+    const index = SETTINGS_TABS.findIndex(entry => entry.id === tab)
+    const step = event.key === 'ArrowRight' ? 1 : -1
+    const next = SETTINGS_TABS[(index + step + SETTINGS_TABS.length) % SETTINGS_TABS.length]
+    if (next === undefined) return
+    setTab(next.id)
+  }
 
   // The Chrome-profile picker needs the connected client labels once per
   // panel visit; the connection row keeps its own live poll when visible.
@@ -317,462 +341,496 @@ export function SettingsPanel({
           </button>
         </div>
 
-        <div className="settings-row">
-          <span className="settings-label">Profile</span>
-          {renaming
-            ? (
-              <div className="model-row">
-                <input
-                  type="text"
-                  value={nameDraft}
-                  spellCheck={false}
-                  autoFocus
-                  aria-label="Profile name"
-                  onChange={(event) => { setNameDraft(event.target.value) }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') void commitRename()
-                    if (event.key === 'Escape') setRenaming(false)
-                  }}
-                />
-                <button type="button" className="models-load" disabled={saving} onClick={() => { void commitRename() }}>
-                  Save name
-                </button>
-                <button type="button" className="models-load" onClick={() => { setRenaming(false) }}>
-                  Cancel
-                </button>
-              </div>
-            )
-            : (
-              <div className="model-row">
-                <select
-                  aria-label="Provider profile"
-                  value={activeId}
-                  onChange={(event) => { selectProfile(event.target.value) }}
-                >
-                  {profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
-                </select>
-                <button
-                  type="button"
-                  className="models-load"
-                  onClick={() => {
-                    setNameDraft(profiles.find(profile => profile.id === activeId)?.name ?? '')
-                    setRenaming(true)
-                  }}
-                >
-                  Rename
-                </button>
-                <button
-                  type="button"
-                  className="models-load"
-                  disabled={saving}
-                  onClick={() => { void runProfileOp({ newProfile: {} }) }}
-                >
-                  New
-                </button>
-                <button
-                  type="button"
-                  className="models-load"
-                  disabled={saving || profiles.length <= 1}
-                  onClick={() => { void runProfileOp({ deleteProfile: { id: activeId } }) }}
-                >
-                  Delete
-                </button>
-              </div>
-            )}
-          <span className="settings-hint">
-            Each profile keeps its own endpoint, key, and model; the rows below edit the selected one. Every
-            {' '}profile runs on the same OpenAI-compatible adapter.
-          </span>
+        <div className="settings-tabs" role="tablist" aria-label="Settings sections" onKeyDown={onTabStripKeyDown}>
+          {SETTINGS_TABS.map(entry => (
+            <button
+              key={entry.id}
+              type="button"
+              role="tab"
+              id={`settings-tab-${entry.id}`}
+              aria-selected={tab === entry.id}
+              aria-controls={`settings-panel-${entry.id}`}
+              className={tab === entry.id ? 'settings-tab active' : 'settings-tab'}
+              onClick={() => { setTab(entry.id) }}
+            >
+              {entry.label}
+            </button>
+          ))}
         </div>
 
-        {users !== undefined && users.length > 0 && activeUserId !== undefined && activeUserId !== ''
-          ? (
-            <div className="settings-row">
-              <span className="settings-label">User</span>
-              <div className="model-row">
-                {userRenaming
-                  ? (
-                    <>
-                      <input
-                        type="text"
-                        value={userNameDraft}
-                        spellCheck={false}
-                        autoFocus
-                        aria-label="User name"
-                        onChange={(event) => { setUserNameDraft(event.target.value) }}
-                        onKeyDown={(event) => {
-                          if (event.key === 'Enter') void commitUserName()
-                          if (event.key === 'Escape') setUserRenaming(false)
-                        }}
-                      />
-                      <button type="button" className="models-load" onClick={() => { void commitUserName() }}>
-                        Save name
-                      </button>
-                      <button type="button" className="models-load" onClick={() => { setUserRenaming(false) }}>
-                        Cancel
-                      </button>
-                    </>
-                  )
-                  : (
-                    <>
-                      <select
-                        aria-label="User profile"
-                        value={activeUserId}
-                        onChange={(event) => { onSwitchUser(event.target.value) }}
-                      >
-                        {users.map(user => <option key={user.id} value={user.id}>{user.name}</option>)}
-                      </select>
-                      <button
-                        type="button"
-                        className="models-load"
-                        onClick={() => {
-                          setUserRenaming(true)
-                          setUserNameDraft(activeUser?.name ?? '')
-                        }}
-                      >
-                        Rename
-                      </button>
-                    </>
-                  )}
+        <div
+          role="tabpanel"
+          id="settings-panel-user"
+          aria-labelledby="settings-tab-user"
+          hidden={tab !== 'user'}
+        >
+          {users !== undefined && users.length > 0 && activeUserId !== undefined && activeUserId !== ''
+            ? (
+              <div className="settings-row">
+                <span className="settings-label">User</span>
+                <div className="model-row">
+                  {userRenaming
+                    ? (
+                      <>
+                        <input
+                          type="text"
+                          value={userNameDraft}
+                          spellCheck={false}
+                          autoFocus
+                          aria-label="User name"
+                          onChange={(event) => { setUserNameDraft(event.target.value) }}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') void commitUserName()
+                            if (event.key === 'Escape') setUserRenaming(false)
+                          }}
+                        />
+                        <button type="button" className="models-load" onClick={() => { void commitUserName() }}>
+                          Save name
+                        </button>
+                        <button type="button" className="models-load" onClick={() => { setUserRenaming(false) }}>
+                          Cancel
+                        </button>
+                      </>
+                    )
+                    : (
+                      <>
+                        <select
+                          aria-label="User profile"
+                          value={activeUserId}
+                          onChange={(event) => { onSwitchUser(event.target.value) }}
+                        >
+                          {users.map(user => <option key={user.id} value={user.id}>{user.name}</option>)}
+                        </select>
+                        <button
+                          type="button"
+                          className="models-load"
+                          onClick={() => {
+                            setUserRenaming(true)
+                            setUserNameDraft(activeUser?.name ?? '')
+                          }}
+                        >
+                          Rename
+                        </button>
+                      </>
+                    )}
+                </div>
+                <span className="settings-hint">
+                  Each user keeps their own chats, groups, and avatar; switching is instant and never stops a
+                  {' '}running task. The avatar row below edits the selected user.
+                </span>
+                <label className="chrome-pick">
+                  <span className="settings-label">Chrome</span>
+                  <select
+                    aria-label="Chrome profile for this user"
+                    value={activeUser?.chromeProfile ?? ''}
+                    onChange={(event) => { void applyChromeProfile(event.target.value) }}
+                  >
+                    <option value="">Any connected profile</option>
+                    {chromeClients.map(client => <option key={client} value={client}>{client}</option>)}
+                  </select>
+                </label>
+                <span className="settings-hint">
+                  Browser steps in this user's chats default to the chosen Chrome profile — connected right now:
+                  {' '}{chromeClients.length > 0 ? chromeClients.join(', ') : 'none'}. Each profile labels itself in the
+                  {' '}extension options.
+                </span>
               </div>
-              <span className="settings-hint">
-                Each user keeps their own chats, groups, and avatar; switching is instant and never stops a
-                {' '}running task. The avatar row below edits the selected user.
-              </span>
-              <label className="chrome-pick">
-                <span className="settings-label">Chrome</span>
-                <select
-                  aria-label="Chrome profile for this user"
-                  value={activeUser?.chromeProfile ?? ''}
-                  onChange={(event) => { void applyChromeProfile(event.target.value) }}
+            )
+            : undefined}
+          <div className="settings-row">
+            <span className="settings-label">Your avatar</span>
+            <div className="avatar-grid small">
+              {Array.from({ length: AVATAR_COUNT }, (_, index) => index + 1).map(option => (
+                <button
+                  key={option}
+                  type="button"
+                  className={avatar === option ? 'avatar-option active' : 'avatar-option'}
+                  aria-label={`Avatar ${String(option)}`}
+                  aria-pressed={avatar === option}
+                  onClick={() => { onAvatar(option) }}
                 >
-                  <option value="">Any connected profile</option>
-                  {chromeClients.map(client => <option key={client} value={client}>{client}</option>)}
-                </select>
-              </label>
-              <span className="settings-hint">
-                Browser steps in this user's chats default to the chosen Chrome profile — connected right now:
-                {' '}{chromeClients.length > 0 ? chromeClients.join(', ') : 'none'}. Each profile labels itself in the
-                {' '}extension options.
-              </span>
+                  <img src={avatarSrc(option)} alt="" draggable={false} />
+                </button>
+              ))}
             </div>
-          )
-          : undefined}
+          </div>
+        </div>
 
-        <label className="settings-row">
-          <span className="settings-label">Model</span>
-          <div className="model-row">
+        <div
+          role="tabpanel"
+          id="settings-panel-provider"
+          aria-labelledby="settings-tab-provider"
+          hidden={tab !== 'provider'}
+        >
+          <label className="settings-row">
+            <span className="settings-label">Model</span>
+            <div className="model-row">
+              <input
+                type="text"
+                value={model}
+                spellCheck={false}
+                placeholder="pick or type a model"
+                onChange={(event) => { setModel(event.target.value) }}
+              />
+              <button
+                type="button"
+                className="models-load"
+                disabled={loadingModels}
+                onClick={() => { void loadModels() }}
+              >
+                {loadingModels ? '…' : 'Load list'}
+              </button>
+              <button
+                type="button"
+                className="models-load"
+                disabled={checkingAbilities}
+                onClick={() => { void runAbilityCheck() }}
+              >
+                {checkingAbilities ? '…' : 'Check abilities'}
+              </button>
+            </div>
+            {abilities !== undefined
+              ? <span className="settings-hint model-abilities">{abilitiesLine(abilities)}</span>
+              : undefined}
+            {models.length > 0
+              ? (
+                <select
+                  aria-label="Pick a model"
+                  value={models.includes(model) ? model : ''}
+                  onChange={(event) => {
+                    if (event.target.value !== '') setModel(event.target.value)
+                  }}
+                >
+                  {!models.includes(model) ? <option value="">{model}</option> : undefined}
+                  {models.map(id => <option key={id} value={id}>{id}</option>)}
+                </select>
+              )
+              : undefined}
+            <span className="settings-hint">Free text, or load the endpoint's model list and pick one.</span>
+          </label>
+          <label className="settings-row">
+            <span className="settings-label">Base URL</span>
             <input
               type="text"
-              value={model}
+              value={baseUrl}
               spellCheck={false}
-              placeholder="pick or type a model"
-              onChange={(event) => { setModel(event.target.value) }}
+              placeholder="default endpoint"
+              onChange={(event) => { setBaseUrl(event.target.value) }}
             />
-            <button
-              type="button"
-              className="models-load"
-              disabled={loadingModels}
-              onClick={() => { void loadModels() }}
-            >
-              {loadingModels ? '…' : 'Load list'}
-            </button>
-            <button
-              type="button"
-              className="models-load"
-              disabled={checkingAbilities}
-              onClick={() => { void runAbilityCheck() }}
-            >
-              {checkingAbilities ? '…' : 'Check abilities'}
-            </button>
+            {isCleartextEndpoint(baseUrl)
+              ? <span className="settings-hint cleartext-warning">This http:// endpoint receives your API key in cleartext.</span>
+              : undefined}
+            <span className="settings-hint">Any OpenAI-compatible gateway; empty means the launch default.</span>
+          </label>
+          <label className="settings-row">
+            <span className="settings-label">API key</span>
+            <input
+              type="password"
+              value={apiKey}
+              spellCheck={false}
+              autoComplete="off"
+              placeholder={config.apiKeySet === true ? 'unchanged (a key is set)' : 'not set — launch environment'}
+              onChange={(event) => { setApiKey(event.target.value) }}
+            />
+            <span className="settings-hint">Stored owner-only under the dsh home; left blank to keep the current key.</span>
+          </label>
+          <div className="settings-row">
+            <span className="settings-label">Thinking</span>
+            <div className="segmented" role="radiogroup" aria-label="Thinking level">
+              {EFFORTS.map(option => (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={effort === option.id}
+                  className={effort === option.id ? 'segment active' : 'segment'}
+                  onClick={() => { setEffort(option.id) }}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </div>
-          {abilities !== undefined
-            ? <span className="settings-hint model-abilities">{abilitiesLine(abilities)}</span>
-            : undefined}
-          {models.length > 0
-            ? (
-              <select
-                aria-label="Pick a model"
-                value={models.includes(model) ? model : ''}
-                onChange={(event) => {
-                  if (event.target.value !== '') setModel(event.target.value)
-                }}
+          <div className="settings-row">
+            <span className="settings-label">
+              Temperature
+              <span className="settings-value">{temperature === undefined ? 'default' : temperature.toFixed(1)}</span>
+            </span>
+            <div className="temperature-row">
+              <input
+                type="range"
+                min={0}
+                max={2}
+                step={0.1}
+                value={temperature ?? 1}
+                aria-label="Temperature"
+                onChange={(event) => { setTemperature(Number(event.target.value)) }}
+              />
+              <button
+                type="button"
+                className="temperature-reset"
+                disabled={temperature === undefined}
+                onClick={() => { setTemperature(undefined) }}
               >
-                {!models.includes(model) ? <option value="">{model}</option> : undefined}
-                {models.map(id => <option key={id} value={id}>{id}</option>)}
-              </select>
+                Default
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <div
+          role="tabpanel"
+          id="settings-panel-bot"
+          aria-labelledby="settings-tab-bot"
+          hidden={tab !== 'bot'}
+        >
+          <div className="settings-row">
+            <span className="settings-label">Profile</span>
+            {renaming
+              ? (
+                <div className="model-row">
+                  <input
+                    type="text"
+                    value={nameDraft}
+                    spellCheck={false}
+                    autoFocus
+                    aria-label="Profile name"
+                    onChange={(event) => { setNameDraft(event.target.value) }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter') void commitRename()
+                      if (event.key === 'Escape') setRenaming(false)
+                    }}
+                  />
+                  <button type="button" className="models-load" disabled={saving} onClick={() => { void commitRename() }}>
+                    Save name
+                  </button>
+                  <button type="button" className="models-load" onClick={() => { setRenaming(false) }}>
+                    Cancel
+                  </button>
+                </div>
+              )
+              : (
+                <div className="model-row">
+                  <select
+                    aria-label="Provider profile"
+                    value={activeId}
+                    onChange={(event) => { selectProfile(event.target.value) }}
+                  >
+                    {profiles.map(profile => <option key={profile.id} value={profile.id}>{profile.name}</option>)}
+                  </select>
+                  <button
+                    type="button"
+                    className="models-load"
+                    onClick={() => {
+                      setNameDraft(profiles.find(profile => profile.id === activeId)?.name ?? '')
+                      setRenaming(true)
+                    }}
+                  >
+                    Rename
+                  </button>
+                  <button
+                    type="button"
+                    className="models-load"
+                    disabled={saving}
+                    onClick={() => { void runProfileOp({ newProfile: {} }) }}
+                  >
+                    New
+                  </button>
+                  <button
+                    type="button"
+                    className="models-load"
+                    disabled={saving || profiles.length <= 1}
+                    onClick={() => { void runProfileOp({ deleteProfile: { id: activeId } }) }}
+                  >
+                    Delete
+                  </button>
+                </div>
+              )}
+            <span className="settings-hint">
+              Each profile keeps its own endpoint, key, and model; the rows below edit the selected one. Every
+              {' '}profile runs on the same OpenAI-compatible adapter.
+            </span>
+          </div>
+          <label className="settings-row">
+            <span className="settings-label">System prompt</span>
+            <textarea
+              value={persona}
+              rows={2}
+              aria-label="System prompt"
+              placeholder="You are a helpful assistant."
+              onChange={(event) => { setPersona(event.target.value) }}
+            />
+            <span className="settings-hint">
+              Each character keeps its own system prompt; switching characters switches it.
+              {' '}Empty means the default persona.
+            </span>
+          </label>
+          <label className="settings-row">
+            <span className="settings-label">Welcome question</span>
+            <input
+              type="text"
+              value={greeting}
+              aria-label="Welcome question"
+              placeholder="What can I help with?"
+              spellCheck={false}
+              onChange={(event) => { setGreeting(event.target.value) }}
+            />
+            <span className="settings-hint">
+              What an empty chat asks for this character. Empty means the default.
+            </span>
+          </label>
+          <div className="settings-row">
+            <span className="settings-label">Character avatar</span>
+            <div className="avatar-grid small">
+              {botAvatarTiles().map(option => (
+                <button
+                  key={option}
+                  type="button"
+                  className={characterAvatar === option ? 'avatar-option active' : 'avatar-option'}
+                  aria-label={`Avatar ${String(option)}`}
+                  aria-pressed={characterAvatar === option}
+                  onClick={() => { void applyCharacterAvatar(option) }}
+                >
+                  <img src={avatarSrc(option)} alt="" draggable={false} />
+                </button>
+              ))}
+            </div>
+            <span className="settings-hint">Robot tiles for characters; your cat tiles belong to user profiles.</span>
+          </div>
+        </div>
+
+        <div
+          role="tabpanel"
+          id="settings-panel-tools"
+          aria-labelledby="settings-tab-tools"
+          hidden={tab !== 'tools'}
+        >
+          <div className="settings-row">
+            <span className="settings-label">Auto-compact</span>
+            <div className="segmented" role="radiogroup" aria-label="Auto-compact">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={autoCompact}
+                className={autoCompact ? 'segment active' : 'segment'}
+                onClick={() => { setAutoCompact(true) }}
+              >
+                On
+              </button>
+              <button
+                type="button"
+                role="radio"
+                aria-checked={!autoCompact}
+                className={autoCompact ? 'segment' : 'segment active'}
+                onClick={() => { setAutoCompact(false) }}
+              >
+                Off
+              </button>
+            </div>
+            <span className="settings-hint">
+              When the context window fills, older turns become a summary the model reads instead —
+              {' '}recent messages stay verbatim, and the full history stays on disk.
+            </span>
+          </div>
+          <div className="settings-row">
+            <span className="settings-label">Search tool</span>
+            <div className="segmented" role="radiogroup" aria-label="Search tool">
+              {SEARCH_TOOLS.map(option => (
+                <button
+                  key={option.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={searchTool === option.id}
+                  className={searchTool === option.id ? 'segment active' : 'segment'}
+                  onClick={() => { setSearchTool(option.id) }}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+            <span className="settings-hint">
+              Your Chrome runs the search with this browser's logins — the companion extension, or the debug
+              {' '}port as a fallback. The model can prefix a query with x: to search your X.
+            </span>
+          </div>
+          {searchTool === 'user-chrome'
+            ? (
+              <div className="settings-row">
+                <span className="settings-label">
+                  Chrome connection
+                  <span className="settings-value chrome-connection">
+                    <span
+                      className={chromeStatus?.extension === true || chromeStatus?.cdp === true ? 'chrome-dot on' : 'chrome-dot'}
+                      aria-hidden="true"
+                    />
+                    {chromeStatus?.extension === true
+                      ? 'extension connected'
+                      : chromeStatus?.cdp === true
+                        ? 'debug port connected'
+                        : chromeStatus === undefined ? 'checking…' : 'not connected'}
+                    {chromeStatus?.extension === true && chromeStatus.clients !== undefined && chromeStatus.clients.length > 0
+                      ? (
+                        <span className="chrome-profiles">
+                          {' · '}
+                          {chromeStatus.clients.map(entry => entry.actuation === true ? `${entry.client} (actions)` : entry.client).join(', ')}
+                        </span>
+                      )
+                      : undefined}
+                  </span>
+                </span>
+                <div className="chrome-row">
+                  <button
+                    type="button"
+                    className="models-load"
+                    disabled={chromeTesting}
+                    onClick={() => { void runChromeTest() }}
+                  >
+                    {chromeTesting ? '…' : 'Test search'}
+                  </button>
+                  <button
+                    type="button"
+                    className="models-load"
+                    aria-expanded={showChromeHelp}
+                    onClick={() => { setShowChromeHelp(!showChromeHelp) }}
+                  >
+                    {showChromeHelp ? 'Hide steps' : 'How to connect'}
+                  </button>
+                </div>
+                {chromeTest !== undefined ? <span className="settings-hint">{chromeTest}</span> : undefined}
+                {showChromeHelp
+                  ? (
+                    <div className="chrome-help">
+                      <p><strong>Extension</strong> — invisible searches, no debug port:</p>
+                      <ol>
+                        <li>Open <code>chrome://extensions</code></li>
+                        <li>Turn on <em>Developer mode</em></li>
+                        <li><em>Load unpacked</em> → <code>{chromeStatus?.extensionPath ?? '…/dsh-lean-chat/packages/web/web-search-chrome/extension'}</code></li>
+                      </ol>
+                      <p>Different port? Set it once in the extension's options after loading.</p>
+                      <p><strong>Debug port</strong> — quit Chrome fully, then relaunch:</p>
+                      <pre><code>open -na "Google Chrome" --args --remote-debugging-port=9222</code></pre>
+                    </div>
+                  )
+                  : undefined}
+              </div>
             )
             : undefined}
-          <span className="settings-hint">Free text, or load the endpoint's model list and pick one.</span>
-        </label>
-
-        <label className="settings-row">
-          <span className="settings-label">Base URL</span>
-          <input
-            type="text"
-            value={baseUrl}
-            spellCheck={false}
-            placeholder="default endpoint"
-            onChange={(event) => { setBaseUrl(event.target.value) }}
-          />
-          {isCleartextEndpoint(baseUrl)
-            ? <span className="settings-hint cleartext-warning">This http:// endpoint receives your API key in cleartext.</span>
-            : undefined}
-          <span className="settings-hint">Any OpenAI-compatible gateway; empty means the launch default.</span>
-        </label>
-
-        <label className="settings-row">
-          <span className="settings-label">API key</span>
-          <input
-            type="password"
-            value={apiKey}
-            spellCheck={false}
-            autoComplete="off"
-            placeholder={config.apiKeySet === true ? 'unchanged (a key is set)' : 'not set — launch environment'}
-            onChange={(event) => { setApiKey(event.target.value) }}
-          />
-          <span className="settings-hint">Stored owner-only under the dsh home; left blank to keep the current key.</span>
-        </label>
-
-        <div className="settings-row">
-          <span className="settings-label">Thinking</span>
-          <div className="segmented" role="radiogroup" aria-label="Thinking level">
-            {EFFORTS.map(option => (
-              <button
-                key={option.id}
-                type="button"
-                role="radio"
-                aria-checked={effort === option.id}
-                className={effort === option.id ? 'segment active' : 'segment'}
-                onClick={() => { setEffort(option.id) }}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="settings-row">
-          <span className="settings-label">
-            Temperature
-            <span className="settings-value">{temperature === undefined ? 'default' : temperature.toFixed(1)}</span>
-          </span>
-          <div className="temperature-row">
-            <input
-              type="range"
-              min={0}
-              max={2}
-              step={0.1}
-              value={temperature ?? 1}
-              aria-label="Temperature"
-              onChange={(event) => { setTemperature(Number(event.target.value)) }}
-            />
-            <button
-              type="button"
-              className="temperature-reset"
-              disabled={temperature === undefined}
-              onClick={() => { setTemperature(undefined) }}
-            >
-              Default
-            </button>
-          </div>
-        </div>
-
-        <label className="settings-row">
-          <span className="settings-label">System prompt</span>
-          <textarea
-            value={persona}
-            rows={2}
-            aria-label="System prompt"
-            placeholder="You are a helpful assistant."
-            onChange={(event) => { setPersona(event.target.value) }}
-          />
-          <span className="settings-hint">
-            Each character keeps its own system prompt; switching characters switches it.
-            {' '}Empty means the default persona.
-          </span>
-        </label>
-
-        <label className="settings-row">
-          <span className="settings-label">Welcome question</span>
-          <input
-            type="text"
-            value={greeting}
-            aria-label="Welcome question"
-            placeholder="What can I help with?"
-            spellCheck={false}
-            onChange={(event) => { setGreeting(event.target.value) }}
-          />
-          <span className="settings-hint">
-            What an empty chat asks for this character. Empty means the default.
-          </span>
-        </label>
-
-        <div className="settings-row">
-          <span className="settings-label">Character avatar</span>
-          <div className="avatar-grid small">
-            {botAvatarTiles().map(option => (
-              <button
-                key={option}
-                type="button"
-                className={characterAvatar === option ? 'avatar-option active' : 'avatar-option'}
-                aria-label={`Avatar ${String(option)}`}
-                aria-pressed={characterAvatar === option}
-                onClick={() => { void applyCharacterAvatar(option) }}
-              >
-                <img src={avatarSrc(option)} alt="" draggable={false} />
-              </button>
-            ))}
-          </div>
-          <span className="settings-hint">Robot tiles for characters; your cat tiles belong to user profiles.</span>
-        </div>
-
-        <div className="settings-row">
-          <span className="settings-label">Auto-compact</span>
-          <div className="segmented" role="radiogroup" aria-label="Auto-compact">
-            <button
-              type="button"
-              role="radio"
-              aria-checked={autoCompact}
-              className={autoCompact ? 'segment active' : 'segment'}
-              onClick={() => { setAutoCompact(true) }}
-            >
-              On
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={!autoCompact}
-              className={autoCompact ? 'segment' : 'segment active'}
-              onClick={() => { setAutoCompact(false) }}
-            >
-              Off
-            </button>
-          </div>
-          <span className="settings-hint">
-            When the context window fills, older turns become a summary the model reads instead —
-            {' '}recent messages stay verbatim, and the full history stays on disk.
-          </span>
-        </div>
-
-        <div className="settings-row">
-          <span className="settings-label">Search tool</span>
-          <div className="segmented" role="radiogroup" aria-label="Search tool">
-            {SEARCH_TOOLS.map(option => (
-              <button
-                key={option.id}
-                type="button"
-                role="radio"
-                aria-checked={searchTool === option.id}
-                className={searchTool === option.id ? 'segment active' : 'segment'}
-                onClick={() => { setSearchTool(option.id) }}
-              >
-                {option.label}
-              </button>
-            ))}
-          </div>
-          <span className="settings-hint">
-            Your Chrome runs the search with this browser's logins — the companion extension, or the debug
-            {' '}port as a fallback. The model can prefix a query with x: to search your X.
-          </span>
-        </div>
-
-        {searchTool === 'user-chrome'
-          ? (
-            <div className="settings-row">
-              <span className="settings-label">
-                Chrome connection
-                <span className="settings-value chrome-connection">
-                  <span
-                    className={chromeStatus?.extension === true || chromeStatus?.cdp === true ? 'chrome-dot on' : 'chrome-dot'}
-                    aria-hidden="true"
-                  />
-                  {chromeStatus?.extension === true
-                    ? 'extension connected'
-                    : chromeStatus?.cdp === true
-                      ? 'debug port connected'
-                      : chromeStatus === undefined ? 'checking…' : 'not connected'}
-                  {chromeStatus?.extension === true && chromeStatus.clients !== undefined && chromeStatus.clients.length > 0
-                    ? (
-                      <span className="chrome-profiles">
-                        {' · '}
-                        {chromeStatus.clients.map(entry => entry.actuation === true ? `${entry.client} (actions)` : entry.client).join(', ')}
-                      </span>
-                    )
-                    : undefined}
-                </span>
-              </span>
-              <div className="chrome-row">
+          <div className="settings-row">
+            <span className="settings-label">Theme</span>
+            <div className="segmented" role="radiogroup" aria-label="Theme">
+              {THEMES.map(option => (
                 <button
+                  key={option.id}
                   type="button"
-                  className="models-load"
-                  disabled={chromeTesting}
-                  onClick={() => { void runChromeTest() }}
+                  role="radio"
+                  aria-checked={theme === option.id}
+                  className={theme === option.id ? 'segment active' : 'segment'}
+                  onClick={() => { onTheme(option.id) }}
                 >
-                  {chromeTesting ? '…' : 'Test search'}
+                  {option.label}
                 </button>
-                <button
-                  type="button"
-                  className="models-load"
-                  aria-expanded={showChromeHelp}
-                  onClick={() => { setShowChromeHelp(!showChromeHelp) }}
-                >
-                  {showChromeHelp ? 'Hide steps' : 'How to connect'}
-                </button>
-              </div>
-              {chromeTest !== undefined ? <span className="settings-hint">{chromeTest}</span> : undefined}
-              {showChromeHelp
-                ? (
-                  <div className="chrome-help">
-                    <p><strong>Extension</strong> — invisible searches, no debug port:</p>
-                    <ol>
-                      <li>Open <code>chrome://extensions</code></li>
-                      <li>Turn on <em>Developer mode</em></li>
-                      <li><em>Load unpacked</em> → <code>{chromeStatus?.extensionPath ?? '…/dsh-lean-chat/packages/web/web-search-chrome/extension'}</code></li>
-                    </ol>
-                    <p>Different port? Set it once in the extension's options after loading.</p>
-                    <p><strong>Debug port</strong> — quit Chrome fully, then relaunch:</p>
-                    <pre><code>open -na "Google Chrome" --args --remote-debugging-port=9222</code></pre>
-                  </div>
-                )
-                : undefined}
+              ))}
             </div>
-          )
-          : undefined}
-
-        <div className="settings-row">
-          <span className="settings-label">Your avatar</span>
-          <div className="avatar-grid small">
-            {Array.from({ length: AVATAR_COUNT }, (_, index) => index + 1).map(option => (
-              <button
-                key={option}
-                type="button"
-                className={avatar === option ? 'avatar-option active' : 'avatar-option'}
-                aria-label={`Avatar ${String(option)}`}
-                aria-pressed={avatar === option}
-                onClick={() => { onAvatar(option) }}
-              >
-                <img src={avatarSrc(option)} alt="" draggable={false} />
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="settings-row">
-          <span className="settings-label">Theme</span>
-          <div className="segmented" role="radiogroup" aria-label="Theme">
-            {THEMES.map(option => (
-              <button
-                key={option.id}
-                type="button"
-                role="radio"
-                aria-checked={theme === option.id}
-                className={theme === option.id ? 'segment active' : 'segment'}
-                onClick={() => { onTheme(option.id) }}
-              >
-                {option.label}
-              </button>
-            ))}
           </div>
         </div>
 

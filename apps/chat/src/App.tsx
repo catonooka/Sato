@@ -33,7 +33,7 @@ import {
   type UserInfo,
 } from './api.ts'
 import { isSafeHref, renderMarkdown } from './markdown.ts'
-import { SettingsPanel, applyTheme, readStoredTheme, storeTheme, type Theme } from './Settings.tsx'
+import { SettingsPanel, applyTheme, readStoredTheme, storeTheme, type SettingsTab, type Theme } from './Settings.tsx'
 import { AvatarModal } from './AvatarModal.tsx'
 import { AddUserModal } from './AddUserModal.tsx'
 import { ConfirmDeleteDialog, MoveGroupDialog, NewGroupDialog } from './SessionDialogs.tsx'
@@ -605,6 +605,8 @@ export default function App(): JSX.Element {
   const [draft, setDraft] = useState('')
   const [config, setConfig] = useState<AppConfig | undefined>(undefined)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // Which settings section an opener intends; the panel mounts onto it.
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>('user')
   const [theme, setTheme] = useState<Theme>(readStoredTheme)
   // User profiles: the roster loads once, and the acting profile is pure
   // client state (the x-dsh-user header) — switching never reloads and never
@@ -1318,6 +1320,7 @@ export default function App(): JSX.Element {
     // instead of letting the adapter's internal key error surface here.
     if (config?.endpointReady === false) {
       setError('no endpoint configured — add your base URL and API key in Settings first')
+      setSettingsTab('provider')
       setSettingsOpen(true)
       return
     }
@@ -1626,7 +1629,10 @@ export default function App(): JSX.Element {
                     <button
                       type="button"
                       className="welcome-connect"
-                      onClick={() => { setSettingsOpen(true) }}
+                      onClick={() => {
+                        setSettingsTab('provider')
+                        setSettingsOpen(true)
+                      }}
                     >
                       Connect a model — add your endpoint and key
                     </button>
@@ -1886,6 +1892,7 @@ export default function App(): JSX.Element {
               setSettingsOpen(false)
             }}
             onClose={() => { setSettingsOpen(false) }}
+            initialTab={settingsTab}
           />
         )
         : undefined}

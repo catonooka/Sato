@@ -1299,7 +1299,8 @@ describe('settings users section', () => {
     await screen.findByText('A')
     // The name side of the user row opens settings.
     fireEvent.click(screen.getByRole('button', { name: /catonooka/ }))
-    const select = await screen.findByLabelText<HTMLSelectElement>('Chrome profile for this user')
+    const panel = await screen.findByRole('dialog', { name: 'Settings' })
+    const select = within(panel).getByLabelText<HTMLSelectElement>('Chrome profile for this user')
     expect(screen.getByText('Any connected profile')).toBeTruthy()
     fireEvent.change(select, { target: { value: 'work' } })
     await waitFor(() => {
@@ -1314,10 +1315,10 @@ describe('settings users section', () => {
     })
     await screen.findByText('A')
     fireEvent.click(screen.getByRole('button', { name: /catonooka/ }))
-    // The provider-profile row has its own Rename; the Users row renders after it.
-    const renameButtons = await screen.findAllByRole('button', { name: 'Rename' })
-    fireEvent.click(renameButtons[renameButtons.length - 1]!)
-    const input = screen.getByLabelText<HTMLInputElement>('User name')
+    // The User tab holds exactly one Rename: the acting user's.
+    const panel = await screen.findByRole('dialog', { name: 'Settings' })
+    fireEvent.click(within(panel).getByRole('button', { name: 'Rename' }))
+    const input = within(panel).getByLabelText<HTMLInputElement>('User name')
     fireEvent.change(input, { target: { value: 'Renamed User' } })
     fireEvent.keyDown(input, { key: 'Enter' })
     await waitFor(() => {
@@ -1356,6 +1357,7 @@ describe('model characters', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: /catonooka/ }))
     const panel = await screen.findByRole('dialog', { name: 'Settings' })
+    fireEvent.click(within(panel).getByRole('tab', { name: 'Bot' }))
     expect(within(panel).getByLabelText<HTMLInputElement>('Welcome question').value).toBe('What shall we build?')
     fireEvent.change(within(panel).getByLabelText('Welcome question'), { target: { value: 'Ask me anything' } })
     fireEvent.click(within(panel).getByRole('button', { name: 'Save' }))
@@ -1571,6 +1573,7 @@ describe('model characters', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: /catonooka/ }))
     const panel = await screen.findByRole('dialog', { name: 'Settings' })
+    fireEvent.click(within(panel).getByRole('tab', { name: 'Provider' }))
     fireEvent.change(within(panel).getByLabelText(/^Model/), { target: { value: 'glm-5.3-flash' } })
     fireEvent.change(within(panel).getByLabelText(/^Base URL/), { target: { value: 'https://gw.example/v1' } })
     fireEvent.change(within(panel).getByLabelText(/^API key/), { target: { value: 'sk-fresh-key' } })
@@ -1590,6 +1593,7 @@ describe('model characters', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: /catonooka/ }))
     const panel = await screen.findByRole('dialog', { name: 'Settings' })
+    fireEvent.click(within(panel).getByRole('tab', { name: 'Bot' }))
     fireEvent.change(within(panel).getByLabelText('Provider profile'), { target: { value: 'pb' } })
     fireEvent.change(within(panel).getByLabelText('System prompt'), { target: { value: 'Be terse.' } })
     fireEvent.click(within(panel).getByRole('button', { name: 'Save' }))
@@ -1607,6 +1611,7 @@ describe('model characters', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: /catonooka/ }))
     const panel = await screen.findByRole('dialog', { name: 'Settings' })
+    fireEvent.click(within(panel).getByRole('tab', { name: 'Bot' }))
     expect(within(panel).getByLabelText<HTMLTextAreaElement>('System prompt').value).toBe('helper persona')
     expect(within(panel).getByLabelText<HTMLInputElement>('Welcome question').value).toBe('What shall we build?')
     expect(within(panel).getByRole('button', { name: 'Avatar 22' }).className).not.toContain('active')
@@ -1622,14 +1627,38 @@ describe('model characters', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: /catonooka/ }))
     const panel = await screen.findByRole('dialog', { name: 'Settings' })
-    // Every tile appears in exactly one grid: cats (1-10) in the user grid,
-    // robots (11-30) in the character grid — never in both.
+    // Cats (1-10) live on the User tab, robots (11-30) on the Bot tab, and
+    // the hidden tab's tiles stay out of the visible accessibility tree.
+    expect(within(panel).getAllByRole('button', { name: /^Avatar \d+$/ })).toHaveLength(10)
     expect(within(panel).getAllByRole('button', { name: 'Avatar 10' })).toHaveLength(1)
+    expect(within(panel).queryByRole('button', { name: 'Avatar 22' })).toBeNull()
+    fireEvent.click(within(panel).getByRole('tab', { name: 'Bot' }))
+    expect(within(panel).getAllByRole('button', { name: /^Avatar \d+$/ })).toHaveLength(20)
     expect(within(panel).getAllByRole('button', { name: 'Avatar 22' })).toHaveLength(1)
     expect(within(panel).getAllByRole('button', { name: 'Avatar 30' })).toHaveLength(1)
-    // User grid (10 cats) + character grid (20 robots) = 30 numbered tiles;
-    // the classic bot avatar is an extra unnumbered option.
-    expect(within(panel).getAllByRole('button', { name: /^Avatar \d+$/ })).toHaveLength(30)
+    expect(within(panel).queryByRole('button', { name: 'Avatar 10' })).toBeNull()
+  })
+
+  it('groups settings into four tabs that keep edits across switches', async () => {
+    await renderApp({
+      config: { activeProfileId: 'pa', profiles },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /catonooka/ }))
+    const panel = await screen.findByRole('dialog', { name: 'Settings' })
+    const tabs = within(panel).getAllByRole('tab')
+    expect(tabs.map(tab => tab.textContent)).toEqual(['User', 'Provider', 'Bot', 'Tools'])
+    // The panel opens on User; a hidden tab's fields leave the visible tree.
+    expect(within(panel).queryByRole('textbox', { name: 'System prompt' })).toBeNull()
+    // Edits survive visiting another tab in between.
+    fireEvent.click(within(panel).getByRole('tab', { name: 'Bot' }))
+    fireEvent.change(within(panel).getByLabelText('System prompt'), { target: { value: 'Be brief.' } })
+    fireEvent.click(within(panel).getByRole('tab', { name: 'Provider' }))
+    expect(within(panel).queryByRole('textbox', { name: 'System prompt' })).toBeNull()
+    fireEvent.click(within(panel).getByRole('tab', { name: 'Bot' }))
+    expect((within(panel).getByRole('textbox', { name: 'System prompt' }) as HTMLTextAreaElement).value).toBe('Be brief.')
+    // Arrow keys walk the strip.
+    fireEvent.keyDown(within(panel).getByRole('tablist'), { key: 'ArrowRight' })
+    expect(within(panel).getByRole('tab', { name: 'Tools' }).getAttribute('aria-selected')).toBe('true')
   })
 
   it('offers exactly the twenty robot tiles in the new-character dialog', async () => {
@@ -1652,6 +1681,7 @@ describe('model characters', () => {
     })
     fireEvent.click(screen.getByRole('button', { name: /catonooka/ }))
     const panel = await screen.findByRole('dialog', { name: 'Settings' })
+    fireEvent.click(within(panel).getByRole('tab', { name: 'Bot' }))
     fireEvent.click(within(panel).getByRole('button', { name: 'Avatar 22' }))
     await waitFor(() => {
       expect(configPatches).toContainEqual({ avatar: 22 })
